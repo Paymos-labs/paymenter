@@ -1350,6 +1350,8 @@ namespace PaymenterPaymosTests {
 
         assertTrue(isset(View::$namespaces['paymos']), 'boot() must register paymos view namespace.');
         assertSame(2, count(FilamentView::$hooks), 'boot() must register both view & edit Filament invoice refund render hooks.');
+        assertSame('panels::page.footer-widgets.after', FilamentView::$hooks[0]['name'], 'Filament 4 view hook must target panels::page.footer-widgets.after.');
+        assertSame('panels::page.footer-widgets.after', FilamentView::$hooks[1]['name'], 'Filament 4 edit hook must target panels::page.footer-widgets.after.');
         assertTrue(
             is_array(FilamentView::$hooks[0]['scopes']) && in_array('App\\Admin\\Resources\\InvoiceResource\\Pages\\ViewInvoice', FilamentView::$hooks[0]['scopes'], true),
             'R4: view-record render hook MUST be scoped to ViewInvoice.'
@@ -1446,16 +1448,18 @@ namespace PaymenterPaymosTests {
         assertSame('everyTenMinutes', Schedule::$events[0]->frequency, 'Schedule must run every 10 minutes.');
         assertTrue(Schedule::$events[0]->withoutOverlapping, 'Schedule must enable withoutOverlapping().');
 
-        // getConfig(): Filament Placeholder + mode + button_text, ZERO secret fields
+        // getConfig(): Paymenter array spec (type=placeholder, NEVER raw Placeholder object which breaks ExtensionHelper::getConfigAsInputs)
         $fields = $gateway->getConfig();
         assertSame(3, count($fields), 'getConfig() must expose exactly 3 items (Connect placeholder, mode, button_text).');
-        assertTrue($fields[0] instanceof Placeholder, 'First config item must be Filament Placeholder when Filament is present.');
-        $html = (string) $fields[0]->content;
+        assertTrue(is_array($fields[0]), 'First config item must be a Paymenter array spec compatible with ExtensionHelper::getConfigAsInputs().');
+        assertSame('placeholder', $fields[0]['type'] ?? null, 'First config item type must be placeholder.');
+        assertTrue($fields[0]['label'] instanceof \Illuminate\Support\HtmlString, 'Placeholder label must be HtmlString for FilamentInput::convert().');
+        $html = (string) $fields[0]['label'];
         assertTrue(str_contains($html, 'paymos-connect-button'), 'Connect placeholder must render Connect button.');
         assertTrue(!str_contains($html, 'sk_live_'), 'HTML must never contain API secret.');
         assertTrue(!str_contains($html, 'whsec_'), 'HTML must never contain webhook secret.');
 
-        $names = [$fields[0]->name, $fields[1]['name'], $fields[2]['name']];
+        $names = [$fields[0]['name'], $fields[1]['name'], $fields[2]['name']];
         assertSame(['paymos_connect', 'mode', 'button_text'], $names, 'Only Connect placeholder, mode, button_text may appear.');
 
         // Verify Extension::config() locality guard works and catches external callers
@@ -2852,6 +2856,221 @@ namespace PaymenterPaymosTests {
         }
     }
 
+    // ── 10. Paymenter v1.5.9 fallback refundLocally (no ExtensionHelper::refundLocally) ─
+    function testPaymenterV15FallbackRefundProjection(): void
+    {
+        $root = dirname(__DIR__);
+        $probe = <<<'PHP'
+namespace App\Enums {
+    enum InvoiceTransactionStatus: string {
+        case Processing = 'processing';
+        case Succeeded = 'succeeded';
+        case Failed = 'failed';
+    }
+}
+namespace App\Helpers {
+    class ExtensionHelper {
+        // Deliberately NO refundLocally() method (matches Paymenter v1.5.9)
+    }
+}
+namespace App\Models {
+    class InvoiceTransaction {
+        public static array $records = [];
+        public mixed $invoice_id;
+        public mixed $gateway_id;
+        public string $amount;
+        public string $transaction_id;
+        public mixed $status;
+        public function __construct(array $data = []) {
+            $this->invoice_id = $data['invoice_id'] ?? null;
+            $this->gateway_id = $data['gateway_id'] ?? null;
+            $this->amount = (string) ($data['amount'] ?? '0');
+            $this->transaction_id = (string) ($data['transaction_id'] ?? '');
+            $this->status = $data['status'] ?? 'succeeded';
+        }
+        public static function where(string $col, mixed $opOrVal, mixed $val = null): object {
+            $target = func_num_args() === 3 ? $val : $opOrVal;
+            $op = func_num_args() === 3 ? strtolower((string) $opOrVal) : '=';
+            $matches = array_values(array_filter(self::$records, static function (self $r) use ($col, $op, $target): bool {
+                $cur = (string) ($r->{$col} ?? '');
+                if ($op === 'like') {
+                    $prefix = rtrim((string) $target, '%');
+                    return str_starts_with($cur, $prefix);
+                }
+                return $cur === (string) $target;
+            }));
+            return new class($matches) {
+                private array $items;
+                public function __construct(array $items) { $this->items = $items; }
+                public function where(string $col, mixed $opOrVal, mixed $val = null): object {
+                    $target = func_num_args() === 3 ? $val : $opOrVal;
+                    $op = func_num_args() === 3 ? strtolower((string) $opOrVal) : '=';
+                    $filtered = array_values(array_filter($this->items, static function ($r) use ($col, $op, $target): bool {
+                        $cur = (string) ($r->{$col} ?? '');
+                        if ($op === 'like') {
+                            return str_starts_with($cur, rtrim((string) $target, '%'));
+                        }
+                        return $cur === (string) $target;
+                    }));
+                    return new self($filtered);
+                }
+                public function first(): mixed { return $this->items[0] ?? null; }
+            };
+        }
+        public static function create(array $data): self {
+            $tx = new self($data);
+            self::$records[] = $tx;
+            return $tx;
+        }
+    }
+    class Invoice {
+        public const STATUS_PENDING = 'pending';
+        public const STATUS_PAID = 'paid';
+        public const STATUS_CANCELLED = 'cancelled';
+        public static array $store = [];
+        public int $id;
+        public string $status = 'paid';
+        public string $total = '29.00';
+        public string $currency_code = 'USD';
+        public int $saveCount = 0;
+        public function __construct(int $id) { $this->id = $id; }
+        public static function find(mixed $id): ?self { return self::$store[(int) $id] ?? null; }
+        public function save(): bool { $this->saveCount++; return true; }
+    }
+}
+namespace {
+    $root = $argv[1];
+    require_once $root . '/src/Autoloader.php';
+    \Paymenter\Extensions\Gateways\Paymos\Internal\Autoloader::register();
+
+    $db = new class implements \Paymenter\Extensions\Gateways\Paymos\Internal\DbDriverInterface {
+        private array $rows = [];
+        private array $locks = [];
+        private bool $tx = false;
+        public function ensureSchema(): void {}
+        public function insertUnique(string $t, array $r, string $pk): bool {
+            $k = (string) ($r[$pk] ?? '');
+            if (isset($this->rows[$t][$k])) return false;
+            $this->rows[$t][$k] = $r;
+            return true;
+        }
+        public function upsert(string $t, array $r, string $pk): void { $this->rows[$t][(string) ($r[$pk] ?? '')] = $r; }
+        public function selectOne(string $t, array $w, ?string $o = null): ?array {
+            $all = $this->selectAll($t, $w, $o, 1);
+            return $all[0] ?? null;
+        }
+        public function selectAll(string $t, array $w, ?string $o = null, ?int $l = null, array $gte = [], array $lte = [], array $gt = []): array {
+            $out = [];
+            foreach ($this->rows[$t] ?? [] as $r) {
+                $match = true;
+                foreach ($w as $k => $v) { if (($r[$k] ?? null) !== $v) { $match = false; break; } }
+                if ($match) $out[] = $r;
+            }
+            return $l !== null ? array_slice($out, 0, $l) : $out;
+        }
+        public function updateWhere(string $t, array $v, array $w, array $lte = []): int {
+            $n = 0;
+            foreach ($this->rows[$t] ?? [] as $k => $r) {
+                $match = true;
+                foreach ($w as $wk => $wv) { if (($r[$wk] ?? null) !== $wv) { $match = false; break; } }
+                if ($match) { $this->rows[$t][$k] = array_merge($r, $v); $n++; }
+            }
+            return $n;
+        }
+        public function deleteWhere(string $t, array $w, array $lt = [], ?int $l = null, array $lte = []): int { return 0; }
+        public function acquireNamedLock(string $n, int $to = 10): bool { $this->locks[$n] = true; return true; }
+        public function ownsNamedLock(string $n): bool { return !empty($this->locks[$n]); }
+        public function releaseNamedLock(string $n): void { unset($this->locks[$n]); }
+        public function inTransaction(): bool { return $this->tx; }
+        public function beginTransaction(): void { $this->tx = true; }
+        public function commit(): bool { $this->tx = false; return true; }
+        public function rollBack(): void { $this->tx = false; }
+    };
+    $key = 'base64:' . base64_encode(str_repeat('k', 32));
+    $credStore = new \Paymenter\Extensions\Gateways\Paymos\Internal\CredentialStore($db, static fn (): string => $key, static fn (): int => 1795640000);
+    $credStore->saveCredentials([
+        'sandbox' => [
+            'project_id' => 'prj_v15',
+            'api_key' => 'pk_test_v15_0000000001',
+            'api_secret' => 'sk_test_v15_0000000001',
+            'webhook_secret' => 'whsec_v15_0000000001',
+            'base_url' => 'https://api.paymos.io',
+            'capabilities' => ['invoice_refunds_v1'],
+            'refund_contract_version' => 1,
+        ],
+    ]);
+    $cfg = \Paymenter\Extensions\Gateways\Paymos\Internal\Config::forWebhook(['mode' => 'sandbox'], $credStore->loadCredentials());
+    $snaps = new \Paymenter\Extensions\Gateways\Paymos\Internal\SnapshotStore($db, static fn (): int => 1795640000);
+    $snaps->save([
+        'external_order_id' => 'paymenter_77_0',
+        'paymos_invoice_id' => 'inv_v15_77',
+        'platform_ref' => '77',
+        'amount' => '29.00',
+        'currency' => 'USD',
+        'environment' => 'sandbox',
+        'project_id' => 'prj_v15',
+        'payment_url' => 'https://checkout.paymos.io/inv_v15_77',
+        'transaction_id' => 'inv_v15_77',
+        'status' => 'paid',
+        'final_status' => 'paid',
+        'renewal_attempt' => 0,
+        'created_at' => 1795640000,
+    ]);
+    $inv = new \App\Models\Invoice(77);
+    \App\Models\Invoice::$store[77] = $inv;
+    \App\Models\InvoiceTransaction::create([
+        'invoice_id' => 77,
+        'gateway_id' => 1,
+        'amount' => '29.00',
+        'transaction_id' => 'inv_v15_77',
+        'status' => \App\Enums\InvoiceTransactionStatus::Succeeded,
+    ]);
+    $intentStore = new \Paymenter\Extensions\Gateways\Paymos\Internal\RefundIntentStore($db, $credStore, static fn (): int => 1795640000);
+    $adapter = new \Paymenter\Extensions\Gateways\Paymos\Internal\RefundAdapter(
+        $cfg, $credStore, $snaps, $intentStore, null, null, static function (): void {}, static fn (): int => 1795640000
+    );
+
+    $refMethod = new \ReflectionMethod($adapter, 'nativeCall');
+    $res = $intentStore->withPaymentLock('77', function () use ($refMethod, $adapter): array {
+        return $refMethod->invoke($adapter, 'refundLocally', [
+            'invoice_id' => '77',
+            'transaction' => \App\Models\InvoiceTransaction::$records[0],
+            'amount' => '29.00',
+            'withdrawal_id' => 'wdr_v15_001',
+            'marker_id' => 'paymos_refund_wdr_v15_001',
+        ]);
+    });
+    // Call a second time to verify idempotency (no duplicate negative transaction)
+    $intentStore->withPaymentLock('77', function () use ($refMethod, $adapter): array {
+        return $refMethod->invoke($adapter, 'refundLocally', [
+            'invoice_id' => '77',
+            'transaction' => \App\Models\InvoiceTransaction::$records[0],
+            'amount' => '29.00',
+            'withdrawal_id' => 'wdr_v15_001',
+            'marker_id' => 'paymos_refund_wdr_v15_001',
+        ]);
+    });
+
+    $ok = ($res['via'] ?? null) === 'paymenter_v1_transaction_reversal'
+        && $inv->status === \App\Models\Invoice::STATUS_CANCELLED
+        && count(\App\Models\InvoiceTransaction::$records) === 2
+        && \App\Models\InvoiceTransaction::$records[1]->amount === '-29'
+        && \App\Models\InvoiceTransaction::$records[1]->transaction_id === 'paymos_refund_wdr_v15_001'
+        && \App\Models\InvoiceTransaction::$records[1]->status === \App\Enums\InvoiceTransactionStatus::Succeeded;
+    echo $ok ? 'OK' : ('FAIL:' . json_encode(['res' => $res, 'status' => $inv->status, 'count' => count(\App\Models\InvoiceTransaction::$records), 'tx1' => \App\Models\InvoiceTransaction::$records[1] ?? null]));
+    exit($ok ? 0 : 1);
+}
+PHP;
+        $tmp = tempnam(sys_get_temp_dir(), 'paym15_probe_');
+        file_put_contents($tmp, "<?php\n" . $probe);
+        $out = [];
+        $code = 0;
+        exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($tmp) . ' ' . escapeshellarg($root) . ' 2>&1', $out, $code);
+        @unlink($tmp);
+        assertSame(0, $code, 'Paymenter v1.5.9 fallback refund probe failed: ' . implode("\n", $out));
+        assertSame('OK', trim(implode('', $out)), 'Paymenter v1.5.9 fallback refund probe must return OK.');
+    }
+
     $tests = [
         'metadata_boot_and_config_locality' => __NAMESPACE__ . '\\testMetadataBootAndConfigLocality',
         'credential_store_encryption_and_validation' => __NAMESPACE__ . '\\testCredentialStoreEncryptionAndValidation',
@@ -2862,6 +3081,7 @@ namespace PaymenterPaymosTests {
         'refunds_async_safe_projection_discovery_and_rejects' => __NAMESPACE__ . '\\testRefundsAsyncSafeProjectionDiscoveryAndRejects',
         'pdo_db_driver_transaction_and_dialect_safety' => __NAMESPACE__ . '\\testPdoDbDriverTransactionAndDialectSafety',
         'six_native_locales_and_package_conformance' => __NAMESPACE__ . '\\testSixNativeLocalesAndPackageConformance',
+        'paymenter_v15_fallback_refund_projection' => __NAMESPACE__ . '\\testPaymenterV15FallbackRefundProjection',
     ];
 
     $passed = 0;

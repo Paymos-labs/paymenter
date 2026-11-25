@@ -35,10 +35,10 @@ use Paymenter\Extensions\Gateways\Paymos\Internal\Translation;
 #[ExtensionMeta(
     name: 'Paymos',
     description: 'Accept USDT, USDC, USD1, DAI stablecoins and gold-backed XAUT payments via Paymos.',
-    version: '1.0.2',
+    version: '1.0.3',
     author: 'Paymos Labs',
     url: 'https://paymos.io',
-    icon: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0Ij48cmVjdCB3aWR0aD0iNjQiIGhlaWdodD0iNjQiIHJ4PSIxNCIgZmlsbD0iIzBCMEYxQSIvPjxwYXRoIGQ9Ik0yMiAxOGgxNGM3LjczIDAgMTMgNC43IDEzIDEycy01LjI3IDEyLTEzIDEyaC03djhoLTdWMTh6bTcgMTdoNi42YzMuODcgMCA2LjQtMi4wMiA2LjQtNXMtMi41My01LTYuNC01SDI5djEweiIgZmlsbD0iIzEwQjk4MSIvPjwvc3ZnPg=='
+    icon: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0Ij48cmVjdCB3aWR0aD0iNjQiIGhlaWdodD0iNjQiIHJ4PSIxNCIgZmlsbD0iIzBCMEYxQSIvPjxwYXRoIGQ9Ik0yMiAxOGgxNGM3LjczIDAgMTMgNC43IDEzIDEycy01LjI3IDEyLTEzIDEyaC03djhoLTdWMTh6bTcgMTdoNi42YzMuODcgMCA2LjQtMi4wMiA2LjQtNXMtMi41My01LTYuNC01SDI5djEweiIgZmlsbD0iI0Y2NzYxNyIvPjwvc3ZnPg=='
 )]
 class Paymos extends Gateway
 {
@@ -90,12 +90,12 @@ class Paymos extends Gateway
                 'App\\Filament\\Resources\\InvoiceResource\\Pages\\EditInvoice',
             ];
             \Filament\Support\Facades\FilamentView::registerRenderHook(
-                'panels::resource.pages.view-record.footer',
+                'panels::page.footer-widgets.after',
                 $renderHook,
                 $viewScopes
             );
             \Filament\Support\Facades\FilamentView::registerRenderHook(
-                'panels::resource.pages.edit-record.footer',
+                'panels::page.footer-widgets.after',
                 $renderHook,
                 $editScopes
             );
@@ -150,23 +150,17 @@ class Paymos extends Gateway
         }
 
         $connectHtml = $this->renderConnectHtml($connected, $locale);
-        $connectField = null;
-        if (class_exists(\Filament\Forms\Components\Placeholder::class)) {
-            $content = class_exists(\Illuminate\Support\HtmlString::class)
-                ? new \Illuminate\Support\HtmlString($connectHtml)
-                : $connectHtml;
-            $connectField = \Filament\Forms\Components\Placeholder::make('paymos_connect')
-                ->label(Translation::text('config_connection_label', $locale))
-                ->content($content);
-        } else {
-            $connectField = [
-                'name' => 'paymos_connect',
-                'label' => Translation::text('config_connection_label', $locale),
-                'type' => 'placeholder',
-                'content' => $connectHtml,
-                'connected' => $connected,
-            ];
-        }
+        $connectContent = class_exists(\Illuminate\Support\HtmlString::class)
+            ? new \Illuminate\Support\HtmlString($connectHtml)
+            : $connectHtml;
+        $connectField = [
+            'name' => 'paymos_connect',
+            'label' => $connectContent,
+            'type' => 'placeholder',
+            'description' => Translation::text('config_connection_label', $locale),
+            'content' => $connectHtml,
+            'connected' => $connected,
+        ];
 
         return [
             $connectField,
