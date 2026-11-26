@@ -1,8 +1,14 @@
 # Paymos for Paymenter
 
+**English** | [简体中文](README.zh-CN.md) | [Русский](README.ru.md) | [Español](README.es.md) | [Deutsch](README.de.md) | [Türkçe](README.tr.md)
+
 Official Paymos payment gateway extension for **Paymenter v1.x** (Laravel / Filament).
 
 Accept **4 stablecoins (`USDT`, `USDC`, `USD1`, `DAI`)** and **gold-backed `XAUT`** across 13 mainnet networks. When an on-chain transfer confirms, the gateway records the payment natively through `ExtensionHelper::addPayment()` so Paymenter marks the invoice paid and runs your provisioning and automation rules automatically.
+
+[![Watch: 12 Official CMS Crypto Plugins — 1-Click Connect (Paymos)](https://i.ytimg.com/vi/VMLUGVumYkg/maxresdefault.jpg)](https://www.youtube.com/watch?v=VMLUGVumYkg)
+
+> **Video walkthrough (1:12, subtitles in 6 languages):** [Watch on YouTube](https://www.youtube.com/watch?v=VMLUGVumYkg)
 
 ## Requirements
 

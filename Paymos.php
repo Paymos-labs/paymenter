@@ -35,7 +35,7 @@ use Paymenter\Extensions\Gateways\Paymos\Internal\Translation;
 #[ExtensionMeta(
     name: 'Paymos',
     description: 'Accept USDT, USDC, USD1, DAI stablecoins and gold-backed XAUT payments via Paymos.',
-    version: '1.0.3',
+    version: '1.0.4',
     author: 'Paymos Labs',
     url: 'https://paymos.io',
     icon: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0Ij48cmVjdCB3aWR0aD0iNjQiIGhlaWdodD0iNjQiIHJ4PSIxNCIgZmlsbD0iIzBCMEYxQSIvPjxwYXRoIGQ9Ik0yMiAxOGgxNGM3LjczIDAgMTMgNC43IDEzIDEycy01LjI3IDEyLTEzIDEyaC03djhoLTdWMTh6bTcgMTdoNi42YzMuODcgMCA2LjQtMi4wMiA2LjQtNXMtMi41My01LTYuNC01SDI5djEweiIgZmlsbD0iI0Y2NzYxNyIvPjwvc3ZnPg=='

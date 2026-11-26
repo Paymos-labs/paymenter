@@ -1,6 +1,6 @@
 {
   "source_repository": "Paymos-labs/paymos",
   "source_path": "plugins/paymenter-paymos",
-  "source_commit": "2db7769fa306996ef225bd1d7078c9738844764b",
-  "version": "1.0.3"
+  "source_commit": "6c8eb7f718e4e78b78d72996c7352cf0489cd0ff",
+  "version": "1.0.4"
 }
