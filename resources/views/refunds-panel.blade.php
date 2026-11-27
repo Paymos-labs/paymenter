@@ -152,10 +152,12 @@
                     if (data && data.reason) {
                         msg += ' (' + String(data.reason) + ')';
                     }
-                    throw new Error(msg);
+                    return { ok: false, errorText: msg };
                 }
-                return data;
+                return { ok: true, data: data };
             });
+        }).catch(function () {
+            return { ok: false, errorText: cfg.fallbackError };
         });
     }
 
@@ -172,10 +174,12 @@
                 invoice_id: cfg.invoiceId,
                 mode: mode,
                 request_token: token
-            }).then(function () {
-                window.location.reload();
-            }).catch(function (err) {
-                showError(err && err.message ? err.message : cfg.fallbackError);
+            }).then(function (result) {
+                if (result && result.ok) {
+                    window.location.reload();
+                    return;
+                }
+                showError(result && result.errorText ? result.errorText : cfg.fallbackError);
                 button.disabled = false;
             });
         });
@@ -191,10 +195,12 @@
             clearError();
             postJson(cfg.checkUrl, {
                 operation_id: operationId
-            }).then(function () {
-                window.location.reload();
-            }).catch(function (err) {
-                showError(err && err.message ? err.message : cfg.fallbackError);
+            }).then(function (result) {
+                if (result && result.ok) {
+                    window.location.reload();
+                    return;
+                }
+                showError(result && result.errorText ? result.errorText : cfg.fallbackError);
                 button.disabled = false;
             });
         });
