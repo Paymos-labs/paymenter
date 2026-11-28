@@ -35,7 +35,7 @@ use Paymenter\Extensions\Gateways\Paymos\Internal\Translation;
 #[ExtensionMeta(
     name: 'Paymos',
     description: 'Accept USDT, USDC, USD1, DAI stablecoins and gold-backed XAUT payments via Paymos.',
-    version: '1.0.6',
+    version: '1.0.7',
     author: 'Paymos Labs',
     url: 'https://paymos.io',
     icon: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0Ij48cmVjdCB3aWR0aD0iNjQiIGhlaWdodD0iNjQiIHJ4PSIxNCIgZmlsbD0iIzBCMEYxQSIvPjxwYXRoIGQ9Ik0yMiAxOGgxNGM3LjczIDAgMTMgNC43IDEzIDEycy01LjI3IDEyLTEzIDEyaC03djhoLTdWMTh6bTcgMTdoNi42YzMuODcgMCA2LjQtMi4wMiA2LjQtNXMtMi41My01LTYuNC01SDI5djEweiIgZmlsbD0iI0Y2NzYxNyIvPjwvc3ZnPg=='
@@ -52,6 +52,9 @@ class Paymos extends Gateway
 
     /** @var callable|null */
     private $logger = null;
+
+    /** @var callable|null */
+    private $adminNotifier = null;
 
     /** @var callable|null */
     private $keyProvider = null;
@@ -559,6 +562,16 @@ class Paymos extends Gateway
         return $this;
     }
 
+    /**
+     * @param callable(string, string): void $notifier receives the Paymenter invoice id and the review note
+     */
+    public function setAdminNotifier(callable $notifier): self
+    {
+        $this->adminNotifier = $notifier;
+
+        return $this;
+    }
+
     public function setKeyProvider(callable $keyProvider): self
     {
         $this->keyProvider = $keyProvider;
@@ -774,6 +787,47 @@ class Paymos extends Gateway
             // Manual review and paid_late must not disappear under LOG_LEVEL=warning.
             $level = ($context['severity'] ?? '') === 'warning' ? 'warning' : 'info';
             ($this->resolveLogger())($level, $safeNote, $context);
+            if ($level === 'warning') {
+                $this->notifyAdmin($platformRef, $safeNote);
+            }
+        };
+    }
+
+    /**
+     * A review note must reach the admin, not only the log file (CMSP-12). A notification
+     * failure never fails the webhook or the reconcile pass that recorded the note.
+     */
+    private function notifyAdmin(string $platformRef, string $note): void
+    {
+        try {
+            ($this->resolveAdminNotifier())($platformRef, $note);
+        } catch (\Throwable $e) {
+            ($this->resolveLogger())('warning', 'Paymos admin notification failed: ' . Config::redactSecrets($e->getMessage()), []);
+        }
+    }
+
+    private function resolveAdminNotifier(): callable
+    {
+        if ($this->adminNotifier !== null) {
+            return $this->adminNotifier;
+        }
+
+        // Paymenter invoices have no notes. Its own channel to the admin is the system email
+        // (Settings, system email address), which Admin > Email logs also lists. Older v1
+        // releases without it keep the warning log only.
+        return static function (string $platformRef, string $note): void {
+            if (!method_exists(\App\Helpers\NotificationHelper::class, 'sendSystemEmailNotification')) {
+                return;
+            }
+            // Webhook retries and every reconcile pass repeat a review note: one letter a day per invoice and note.
+            if (class_exists(\Illuminate\Support\Facades\Cache::class)
+                && !\Illuminate\Support\Facades\Cache::add('paymos:admin-note:' . sha1($platformRef . "\n" . $note), 1, 86400)) {
+                return;
+            }
+            \App\Helpers\NotificationHelper::sendSystemEmailNotification(
+                'Paymos: invoice #' . $platformRef . ' needs review',
+                $note
+            );
         };
     }
 

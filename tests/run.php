@@ -3241,6 +3241,31 @@ PHP;
         assertSame(1, count($warnings), 'The paid_late note must be logged at warning level.');
     }
 
+    function testAuditReviewNotesReachTheAdminBySystemEmail(): void
+    {
+        resetGlobals();
+        $now = 1700530500;
+        $clock = static function () use (&$now): int { return $now; };
+        $db = new InMemoryDbDriver();
+        // CMSP-12: Paymenter invoices have no notes; a review note reaches the admin through the
+        // native system email (and its Email logs entry), not only the log file.
+        Invoice::put(new Invoice(967, '30.00', 'USD', 'pending', 42));
+        $lateApi = auditInvoiceApi('967', 'inv_967', '30', 'expired');
+        $lateApi['paid_late_at'] = $now;
+        $logs = [];
+        $gateway = makeGateway(['mode' => 'live'], $db, new MockTransport([jsonResponse(200, $lateApi)]), $clock, true, true, $logs);
+        $notified = [];
+        $gateway->setAdminNotifier(static function (string $platformRef, string $note) use (&$notified): void {
+            $notified[] = [$platformRef, $note];
+        });
+        $gateway->getSnapshotStore()->save(auditSnapshot('967', 'inv_967', '30', $now, 'expired'));
+        $resp = $gateway->webhook(auditSignedRequest('evt_967_late', 'invoice.paid_late', $lateApi, $now));
+        assertSame(200, $resp['status'], 'invoice.paid_late is acknowledged.');
+        assertSame(1, count($notified), 'The paid_late review note reaches the admin once.');
+        assertSame('967', $notified[0][0], 'The admin is told which invoice to review.');
+        assertTrue(str_contains($notified[0][1], 'paid_late'), 'The admin reads the review note itself.');
+    }
+
     function testAuditFreshCreateIgnoresForeignFinalInvoice(): void
     {
         resetGlobals();
@@ -3505,6 +3530,7 @@ PHP;
         'audit_stale_expires_at_reads_invoice_back' => __NAMESPACE__ . '\\testAuditStaleExpiresAtReadsInvoiceBack',
         'audit_paid_elsewhere_keeps_later_paymos_payment' => __NAMESPACE__ . '\\testAuditPaidElsewhereKeepsLaterPaymosPayment',
         'audit_manual_review_is_logged_as_warning' => __NAMESPACE__ . '\\testAuditManualReviewIsLoggedAsWarning',
+        'audit_review_notes_reach_the_admin_by_system_email' => __NAMESPACE__ . '\\testAuditReviewNotesReachTheAdminBySystemEmail',
         'audit_fresh_create_ignores_foreign_final_invoice' => __NAMESPACE__ . '\\testAuditFreshCreateIgnoresForeignFinalInvoice',
         'audit_refund_locally_float_and_refunded_amount' => __NAMESPACE__ . '\\testAuditRefundLocallyGetsFloatAndRefundedAmountBlocksRefund',
         'audit_checkout_errors_reach_the_buyer' => __NAMESPACE__ . '\\testAuditCheckoutErrorsReachTheBuyer',

@@ -8,6 +8,13 @@ The public release history also lives at [paymos.io/changelog](https://paymos.io
 
 ## [Unreleased]
 
+## [1.0.7] - 2026-11-28
+
+- fix(paymenter): tell the admin about review notes by system email
+
+### Fixed
+- Manual review and `paid_late` notes also reach the admin as a Paymenter system email (Settings, system email address; listed in Admin > Email logs), at most once a day per invoice and note. Paymenter invoices have no notes; releases without system emails keep the warning log only.
+
 ## [1.0.6] - 2026-11-28
 
 - fix(paymenter): buyer-facing checkout errors, refund safety, snapshot status
