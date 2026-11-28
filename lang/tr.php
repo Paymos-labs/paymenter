@@ -3,7 +3,6 @@
 declare(strict_types=1);
 
 return [
-    'pay_button' => 'Paymos ile öde',
     'payment_cannot_be_used' => 'Bu ödeme yöntemi bu fatura için kullanılamaz.',
     'payment_unavailable' => 'Paymos geçici olarak kullanılamıyor. Lütfen destek ile iletişime geçin.',
     'replacement_blocked' => 'Ödemeye devam edebilmeniz için sağlayıcının bu siparişi incelemesi gerekiyor. Lütfen destekle iletişime geçin.',
@@ -24,8 +23,6 @@ return [
     'config_connection_label' => 'Bağlantı',
     'config_connection_connected' => 'Bağlı — kimlik bilgileri bu Paymenter kurulumunda şifrelenerek saklanıyor',
     'config_connection_disconnected' => 'Bağlı değil — “Paymos’u bağla” düğmesine tıklayın ve bu kurulumu onaylayın',
-    'config_button_text_label' => 'Düğme metni',
-    'config_button_text_description' => 'Paymenter fatura ödeme düğmesinde gösterilen metin.',
     'refund_panel_title' => 'Paymos iadeleri',
     'refund_label_operation' => 'İşlem',
     'refund_label_type' => 'Tür',
@@ -39,6 +36,7 @@ return [
     'refund_failed' => 'İade isteği başarısız oldu.',
     'refund_reconnect_hint' => 'Bu bağlantıda Paymos üzerinden iade yapılamıyor: Ağ Geçidi ayarlarında “Paymos’u bağla” ile yeniden bağlayın.',
     'refund_native_in_progress' => 'Paymos iadesi işleniyor. İadeyi bu faturadaki “Paymos iadeleri” panelinden takip edin; transfer tamamlandığında eklenti iadeyi Paymenter’a kaydeder.',
+    'refund_native_use_panel' => 'İadeyi bu faturadaki “Paymos iadeleri” panelinden başlatın. Paymos’a hiçbir şey gönderilmedi.',
     'refund_native_failed' => 'Paymos iadesi başarısız oldu. Aşağıdaki nedeni ve faturadaki “Paymos iadeleri” panelini kontrol edin.',
     'refund_external_badge' => 'Paymos panelinden oluşturuldu',
     'refund_empty' => 'Bu fatura için henüz Paymos iadesi talep edilmedi.',

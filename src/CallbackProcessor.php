@@ -292,6 +292,7 @@ final class CallbackProcessor
                     'reason' => $verification->reason(),
                     'invoice_id' => $event->invoiceId(),
                     'event_id' => $event->id(),
+                    'severity' => 'warning',
                 ]);
                 throw new \RuntimeException('Paymos reverse verification failed: ' . $verification->reason());
             }
@@ -309,6 +310,7 @@ final class CallbackProcessor
                         'event_id' => $event->id(),
                         'invoice_id' => $event->invoiceId(),
                         'paid_late_at' => $event->paidLateAt(),
+                        'severity' => 'warning',
                     ]
                 );
             }
@@ -336,7 +338,13 @@ final class CallbackProcessor
         // Roll-back & double-payment guard: an already-paid Paymenter invoice must never
         // be downgraded or credited a second time.
         if (!empty($billingInvoice['is_paid']) && self::isCompleteOrDowngrade($action)) {
-            $this->snapshots->updateStatusByExternalOrderId((string) $snapshot['external_order_id'], 'paid');
+            if ($action === StatusMapper::ACTION_PAYMENT_COMPLETE) {
+                return $this->recordPaymentOnPaidInvoice($event, $snapshot, $billingInvoice, $recordNote);
+            }
+
+            // Record what Paymos reported, not "paid": a later real payment must not look stale.
+            $observed = $event->status() !== '' ? $event->status() : $action;
+            $this->snapshots->updateStatusByExternalOrderId((string) $snapshot['external_order_id'], $observed);
             $recordNote($platformRef, 'Paymos: ignored ' . $event->type() . ' because Paymenter invoice is already paid.', [
                 'event_id' => $event->id(),
                 'invoice_id' => $event->invoiceId(),
@@ -394,6 +402,7 @@ final class CallbackProcessor
                 'event_id' => $event->id(),
                 'invoice_id' => $event->invoiceId(),
                 'reason' => 'manual_review',
+                'severity' => 'warning',
             ]);
             throw new \RuntimeException('Paymos payment amount or currency mismatch requires manual review.');
         }
@@ -417,6 +426,48 @@ final class CallbackProcessor
             'status' => $finalStatus,
             'transaction_id' => $transactionId,
             'applied' => true,
+        ];
+    }
+
+    /**
+     * The Paymenter invoice is already paid and Paymos reports a completed payment. The Paymos
+     * money is real: record it with its transaction (refundable from the panel) and never add a
+     * second Paymenter payment. Unless this payment is already on the invoice, the admin is asked
+     * to review it.
+     *
+     * @param array<string, mixed>                               $snapshot
+     * @param array<string, mixed>                               $billingInvoice
+     * @param callable(string, string, array<string, mixed>): void $recordNote
+     * @return array<string, mixed>
+     */
+    private function recordPaymentOnPaidInvoice(WebhookEvent $event, array $snapshot, array $billingInvoice, callable $recordNote): array
+    {
+        $transactionId = self::extractTransactionId($event);
+        $finalStatus = $event->status() !== '' ? strtolower(trim($event->status())) : 'paid';
+        $this->snapshots->markCompleted((string) $snapshot['external_order_id'], $transactionId, $finalStatus);
+
+        $onInvoice = isset($billingInvoice['transaction_ids']) && is_array($billingInvoice['transaction_ids'])
+            && in_array($transactionId, $billingInvoice['transaction_ids'], true);
+        if (!$onInvoice) {
+            $recordNote(
+                (string) $snapshot['platform_ref'],
+                'Manual review: Paymos payment ' . $event->invoiceId() . ' (' . $transactionId . ') arrived for an invoice that was already paid another way. Refund it in Paymos refunds or credit the client.',
+                [
+                    'event_id' => $event->id(),
+                    'invoice_id' => $event->invoiceId(),
+                    'reason' => 'manual_review',
+                    'severity' => 'warning',
+                ]
+            );
+        }
+
+        return [
+            'ok' => true,
+            'ignored' => true,
+            'reason' => 'already_paid',
+            'status' => $finalStatus,
+            'transaction_id' => $transactionId,
+            'applied' => false,
         ];
     }
 

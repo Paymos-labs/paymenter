@@ -176,6 +176,8 @@ namespace App\Models {
         public string|float|int $amount;
         public string $status = 'succeeded';
         public bool $is_refunded = false;
+        /** Paymenter master: ExtensionHelper::recordRefund() increments this instead of a status. */
+        public string|float|int $refunded_amount = 0;
         public ?string $paymos_refund_token = null;
 
         public function __construct(
@@ -277,13 +279,17 @@ namespace App\Helpers {
             }
         }
 
-        public static function refundLocally(InvoiceTransaction $transaction, mixed $amount): void
+        /**
+         * Upstream signature (Paymenter master): refundLocally(InvoiceTransaction $transaction, float $amount).
+         */
+        public static function refundLocally(InvoiceTransaction $transaction, float $amount): void
         {
             self::$refundLocallyCalls[] = [
                 'transaction_id' => $transaction->transaction_id,
                 'invoice_id' => $transaction->invoice_id,
                 'amount' => $amount,
             ];
+            $transaction->refunded_amount = (float) $transaction->refunded_amount + $amount;
             $transaction->status = 'refunded';
             $transaction->is_refunded = true;
             $invoice = Invoice::find($transaction->invoice_id);
@@ -1450,7 +1456,7 @@ namespace PaymenterPaymosTests {
 
         // getConfig(): Paymenter array spec (type=placeholder, NEVER raw Placeholder object which breaks ExtensionHelper::getConfigAsInputs)
         $fields = $gateway->getConfig();
-        assertSame(3, count($fields), 'getConfig() must expose exactly 3 items (Connect placeholder, mode, button_text).');
+        assertSame(2, count($fields), 'getConfig() must expose exactly 2 items (Connect placeholder, mode).');
         assertTrue(is_array($fields[0]), 'First config item must be a Paymenter array spec compatible with ExtensionHelper::getConfigAsInputs().');
         assertSame('placeholder', $fields[0]['type'] ?? null, 'First config item type must be placeholder.');
         assertTrue($fields[0]['label'] instanceof \Illuminate\Support\HtmlString, 'Placeholder label must be HtmlString for FilamentInput::convert().');
@@ -1459,8 +1465,8 @@ namespace PaymenterPaymosTests {
         assertTrue(!str_contains($html, 'sk_live_'), 'HTML must never contain API secret.');
         assertTrue(!str_contains($html, 'whsec_'), 'HTML must never contain webhook secret.');
 
-        $names = [$fields[0]['name'], $fields[1]['name'], $fields[2]['name']];
-        assertSame(['paymos_connect', 'mode', 'button_text'], $names, 'Only Connect placeholder, mode, button_text may appear.');
+        $names = [$fields[0]['name'], $fields[1]['name']];
+        assertSame(['paymos_connect', 'mode'], $names, 'Only Connect placeholder and mode may appear.');
 
         // Verify Extension::config() locality guard works and catches external callers
         $threw = false;
@@ -1772,14 +1778,12 @@ namespace PaymenterPaymosTests {
 
         // Change amount while inv_checkout_002 is awaiting_payment -> fail-closed block!
         $invoice->remaining = '70.00';
-        $blocked = false;
-        try {
-            $gateway->pay($invoice, '70.00');
-        } catch (\RuntimeException $e) {
-            $blocked = true;
-            assertSame(Translation::text('replacement_blocked', 'en'), $e->getMessage(), 'Blocked replacement must show localized replacement_blocked copy.');
-        }
-        assertTrue($blocked, 'Replacing an awaiting_payment invoice must fail closed.');
+        $blocked = $gateway->pay($invoice, '70.00');
+        assertTrue($blocked instanceof \Illuminate\Support\HtmlString, 'Replacing an awaiting_payment invoice must fail closed.');
+        assertTrue(
+            str_contains((string) $blocked, htmlspecialchars(Translation::text('replacement_blocked', 'en'), ENT_QUOTES, 'UTF-8')),
+            'Blocked replacement must show localized replacement_blocked copy.'
+        );
 
         // Crash recovery: pre-seed STATUS_CREATING intent -> replays EXACT same payload without new external_order_id
         $crashDb = new InMemoryDbDriver();
@@ -1813,14 +1817,12 @@ namespace PaymenterPaymosTests {
 
         // paid_late_noted guard blocks minting new invoice
         $crashGateway->getSnapshotStore()->markPaidLateNoted('paymenter_202_0', 'evt_late_1');
-        $paidLateBlocked = false;
-        try {
-            $crashGateway->pay($inv202, '25.00');
-        } catch (\RuntimeException $e) {
-            $paidLateBlocked = true;
-            assertSame(Translation::text('replacement_blocked', 'en'), $e->getMessage(), 'paid_late_noted must block new invoice.');
-        }
-        assertTrue($paidLateBlocked, 'paid_late_noted snapshot must block checkout.');
+        $paidLateBlocked = $crashGateway->pay($inv202, '25.00');
+        assertTrue($paidLateBlocked instanceof \Illuminate\Support\HtmlString, 'paid_late_noted snapshot must block checkout.');
+        assertTrue(
+            str_contains((string) $paidLateBlocked, htmlspecialchars(Translation::text('replacement_blocked', 'en'), ENT_QUOTES, 'UTF-8')),
+            'paid_late_noted must block new invoice.'
+        );
 
         // RFC 9457 application/problem+json (400/409/429) surfaces safe message without secrets
         $errTransport = new MockTransport([
@@ -1836,15 +1838,10 @@ namespace PaymenterPaymosTests {
         $errDb = new InMemoryDbDriver();
         $errGateway = makeGateway(['mode' => 'live'], $errDb, $errTransport, $clock);
         $errInv = new Invoice(303, '15.00', 'XYZ', 'pending', 88);
-        $errCaught = false;
-        try {
-            $errGateway->pay($errInv, '15.00');
-        } catch (\RuntimeException $e) {
-            $errCaught = true;
-            assertTrue(str_contains($e->getMessage(), 'Currency XYZ is not supported'), 'RFC 9457 detail must surface safely.');
-            assertTrue(!str_contains($e->getMessage(), 'sk_live_'), 'Secret must never leak in API error message.');
-        }
-        assertTrue($errCaught, 'RFC 9457 error must throw without marking invoice paid.');
+        $errHtml = $errGateway->pay($errInv, '15.00');
+        assertTrue($errHtml instanceof \Illuminate\Support\HtmlString, 'RFC 9457 error must reach the buyer without marking invoice paid.');
+        assertTrue(str_contains((string) $errHtml, 'Currency XYZ is not supported'), 'RFC 9457 detail must surface safely.');
+        assertTrue(!str_contains((string) $errHtml, 'sk_live_'), 'Secret must never leak in API error message.');
         assertSame('pending', $errInv->status, 'Failed checkout must never mark invoice paid.');
 
         // RFC 9457 409 Conflict & 429 RateLimit + non-English (ru) localized fallback without leaking secrets
@@ -1867,17 +1864,15 @@ namespace PaymenterPaymosTests {
         $errRuDb = new InMemoryDbDriver();
         $errRuGw = makeGateway(['mode' => 'live'], $errRuDb, $err409Transport, $clock);
         $errRuGw->setLocaleOverride('ru');
-        $ruCaught = false;
-        try {
-            $errRuGw->pay(new Invoice(304, '15.00', 'USD', 'pending', 'user@example.com'), '15.00');
-        } catch (\RuntimeException $e) {
-            $ruCaught = true;
-            assertSame(Translation::text('payment_cannot_be_used', 'ru'), $e->getMessage(), 'Non-English locale must show localized fallback on API error.');
-            assertTrue(!str_contains($e->getMessage(), 'sk_live_'), 'Secret must never appear in error message.');
-        }
-        assertTrue($ruCaught, '409 Conflict must throw safe localized error.');
+        $ruHtml = $errRuGw->pay(new Invoice(304, '15.00', 'USD', 'pending', 'user@example.com'), '15.00');
+        assertTrue($ruHtml instanceof \Illuminate\Support\HtmlString, '409 Conflict must show a safe localized error.');
+        assertTrue(
+            str_contains((string) $ruHtml, htmlspecialchars(Translation::text('payment_cannot_be_used', 'ru'), ENT_QUOTES, 'UTF-8')),
+            'Non-English locale must show localized fallback on API error.'
+        );
+        assertTrue(!str_contains((string) $ruHtml, 'sk_live_'), 'Secret must never appear in error message.');
 
-        // products[] amount-only fallback (>50 items, zero/negative item price) & email stripped from client_id
+        // products[] amount-only fallback (>50 items), zero-price line kept as a product & email stripped from client_id
         $fallbackTransport = new MockTransport([
             jsonResponse(201, ['invoice_id' => 'inv_fb_1', 'payment_url' => 'https://checkout.paymos.io/inv_fb_1', 'status' => 'awaiting_client']),
             jsonResponse(201, ['invoice_id' => 'inv_fb_2', 'payment_url' => 'https://checkout.paymos.io/inv_fb_2', 'status' => 'awaiting_client']),
@@ -1895,7 +1890,7 @@ namespace PaymenterPaymosTests {
 
         $fbGw->pay(new Invoice(306, '10.00', 'USD', 'pending', 99, null, [new InvoiceItem('Free item', '0.00', 1)]), '10.00');
         $fbReq2 = json_decode($fallbackTransport->requests()[1]['body'], true);
-        assertTrue(!isset($fbReq2['products']), 'Zero-price line item must fall back to amount-only.');
+        assertSame('0', $fbReq2['products'][0]['unit_amount'] ?? null, 'A zero-price line item is a valid product (unit_amount 0).');
         assertSame('99', $fbReq2['client_id'], 'Numeric user_id must be sent as client_id.');
     }
 
@@ -2603,6 +2598,8 @@ namespace PaymenterPaymosTests {
         };
 
         $discGw = makeGateway(['mode' => 'live'], $db, $discTransport, $clock);
+        // Discovery runs in the 10-minute schedule; the GET panel only reads what it recorded (CMSP-48).
+        $discGw->runScheduledReconciliation(true);
         $panelResp = $discGw->refundPanel(new Request('', [], $admin), '603');
         assertSame(200, $panelResp['status'], 'Admin refundPanel must succeed.');
         assertSame(0, $discTransport->postRefundCalls, 'RefundDiscovery must NEVER call POST /v1/refunds.');
@@ -3071,7 +3068,452 @@ PHP;
         assertSame('OK', trim(implode('', $out)), 'Paymenter v1.5.9 fallback refund probe must return OK.');
     }
 
+    // ── 11. Feature audit 2026-11-28 (CMSP-09..13, 21..23, 37, 41, 42, 48, 49) ─
+    /**
+     * @return array<string, mixed>
+     */
+    function auditSnapshot(string $invoiceId, string $paymosInvoiceId, string $amount, int $now, string $status = 'awaiting_payment'): array
+    {
+        return [
+            'external_order_id' => 'paymenter_' . $invoiceId . '_0',
+            'paymos_invoice_id' => $paymosInvoiceId,
+            'platform_ref' => $invoiceId,
+            'amount' => $amount,
+            'currency' => 'USD',
+            'environment' => 'live',
+            'project_id' => 'prj_paymenter_live_001',
+            'payment_url' => 'https://checkout.paymos.io/' . $paymosInvoiceId,
+            'status' => $status,
+            'renewal_attempt' => 0,
+            'created_at' => $now - 60,
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    function auditInvoiceApi(string $invoiceId, string $paymosInvoiceId, string $amount, string $status): array
+    {
+        return [
+            'invoice_id' => $paymosInvoiceId,
+            'project_id' => 'prj_paymenter_live_001',
+            'status' => $status,
+            'is_test' => false,
+            'order' => ['external_id' => 'paymenter_' . $invoiceId . '_0', 'amount' => $amount, 'currency' => 'USD'],
+            'payment' => ['transfers' => [['status' => 'confirmed', 'tx_hash' => '0xaudit_' . $invoiceId]]],
+        ];
+    }
+
+    function auditSignedRequest(string $eventId, string $eventType, array $data, int $now): Request
+    {
+        $raw = json_encode([
+            'event_id' => $eventId,
+            'event_type' => $eventType,
+            'version' => 1,
+            'occurred_at' => $now,
+            'data' => $data,
+        ], JSON_UNESCAPED_SLASHES);
+
+        return new Request((string) $raw, ['X-Webhook-Signature' => signWebhook('whsec_paymenter_live_001', $now, (string) $raw)]);
+    }
+
+    function auditProblem(int $status, string $code, string $detail): HttpResponse
+    {
+        return jsonResponse($status, [
+            'type' => 'https://paymos.io/docs/errors/codes#' . $code,
+            'title' => 'Bad Request',
+            'status' => $status,
+            'detail' => $detail,
+            'code' => $code,
+        ], ['content-type' => 'application/problem+json']);
+    }
+
+    function testAuditFinal4xxEndsCreatingIntent(): void
+    {
+        resetGlobals();
+        $now = 1700500000;
+        $clock = static function () use (&$now): int { return $now; };
+
+        // CMSP-09: an intent for 0.50 USD stuck in `creating`; the invoice is now 15 USD.
+        $db = new InMemoryDbDriver();
+        $transport = new MockTransport([
+            auditProblem(400, 'invoice_amount_below_minimum', 'Invoice amount is below the minimum.'),
+            jsonResponse(201, ['invoice_id' => 'inv_970_1', 'payment_url' => 'https://checkout.paymos.io/inv_970_1', 'status' => 'awaiting_client', 'expires_at' => $now + 1800]),
+        ]);
+        $gateway = makeGateway(['mode' => 'live'], $db, $transport, $clock);
+        $intent = auditSnapshot('970', 'pending:paymenter_970_0', '0.5', $now, 'creating');
+        $intent['payment_url'] = '';
+        $gateway->getSnapshotStore()->save($intent);
+        $url = $gateway->pay(new Invoice(970, '15.00', 'USD', 'pending', 42), '15.00');
+        assertSame('https://checkout.paymos.io/inv_970_1', (string) $url, 'A rejected intent must not block the next payment.');
+        $bodies = array_map(static fn (array $r): array => json_decode((string) $r['body'], true), $transport->requests());
+        assertSame('0.5', $bodies[0]['amount'], 'The stored intent is replayed once.');
+        assertSame('paymenter_970_1', $bodies[1]['external_order_id'], 'The next attempt uses a new key.');
+        assertSame('15', $bodies[1]['amount'], 'The next attempt uses the current amount.');
+
+        // A fresh create rejected with 4xx ends its intent; the next payment is a new attempt, not a replay.
+        $db2 = new InMemoryDbDriver();
+        $transport2 = new MockTransport([
+            auditProblem(400, 'invoice_amount_below_minimum', 'Invoice amount is below the minimum.'),
+            jsonResponse(201, ['invoice_id' => 'inv_971_1', 'payment_url' => 'https://checkout.paymos.io/inv_971_1', 'status' => 'awaiting_client', 'expires_at' => $now + 1800]),
+        ]);
+        $gateway2 = makeGateway(['mode' => 'live'], $db2, $transport2, $clock);
+        $inv971 = new Invoice(971, '0.40', 'USD', 'pending', 42);
+        try {
+            $gateway2->pay($inv971, '0.40');
+        } catch (\Throwable $e) {
+            // The buyer-facing shape of this error is covered by testAuditCheckoutErrorsReachTheBuyer.
+        }
+        $ended = $gateway2->getSnapshotStore()->findByExternalOrderId('paymenter_971_0');
+        assertTrue(is_array($ended) && $ended['status'] !== 'creating', 'A definitive 4xx must end the creating intent.');
+        $inv971->remaining = '12.00';
+        $url2 = $gateway2->pay($inv971, '12.00');
+        assertSame('https://checkout.paymos.io/inv_971_1', (string) $url2, 'The next attempt must create a new invoice.');
+        $body2 = json_decode((string) $transport2->requests()[1]['body'], true);
+        assertSame('paymenter_971_1', $body2['external_order_id'], 'The rejected attempt must not be replayed.');
+    }
+
+    function testAuditStaleExpiresAtReadsInvoiceBack(): void
+    {
+        resetGlobals();
+        $now = 1700510000;
+        $clock = static function () use (&$now): int { return $now; };
+        $db = new InMemoryDbDriver();
+        // CMSP-10: the buyer picked a network after create; the server moved the deadline without a webhook.
+        $transport = new MockTransport([
+            jsonResponse(200, ['invoice_id' => 'inv_980_0', 'status' => 'awaiting_payment', 'expires_at' => $now + 1140]),
+        ]);
+        $gateway = makeGateway(['mode' => 'live'], $db, $transport, $clock);
+        $row = auditSnapshot('980', 'inv_980_0', '20', $now, 'awaiting_client');
+        $row['expires_at'] = $now - 360;
+        $gateway->getSnapshotStore()->save($row);
+        $url = $gateway->pay(new Invoice(980, '20.00', 'USD', 'pending', 42), '20.00');
+        assertSame('https://checkout.paymos.io/inv_980_0', (string) $url, 'A still payable invoice must be reused.');
+        assertSame(1, count($transport->requests()), 'Exactly one read-back request is expected.');
+        assertSame('GET', $transport->requests()[0]['method'], 'A stale local deadline must be read back from Paymos.');
+    }
+
+    function testAuditPaidElsewhereKeepsLaterPaymosPayment(): void
+    {
+        resetGlobals();
+        $now = 1700520000;
+        $clock = static function () use (&$now): int { return $now; };
+        $db = new InMemoryDbDriver();
+        // CMSP-11: the client paid invoice 965 by card while a crypto payment was confirming.
+        $invoice = new Invoice(965, '25.00', 'USD', 'paid', 42);
+        $invoice->remaining = '0';
+        Invoice::put($invoice);
+        $paidApi = auditInvoiceApi('965', 'inv_965', '25', 'paid');
+        $transport = new MockTransport([jsonResponse(200, $paidApi)]);
+        $gateway = makeGateway(['mode' => 'live'], $db, $transport, $clock);
+        $gateway->getSnapshotStore()->save(auditSnapshot('965', 'inv_965', '25', $now));
+
+        $confirming = $gateway->webhook(auditSignedRequest('evt_965_conf', 'invoice.confirming', auditInvoiceApi('965', 'inv_965', '25', 'confirming'), $now));
+        assertSame(200, $confirming['status'], 'A confirming event on a paid invoice is acknowledged.');
+        assertSame('confirming', $gateway->getSnapshotStore()->findByExternalOrderId('paymenter_965_0')['status'], 'A non-final event must not record paid.');
+
+        $paid = $gateway->webhook(auditSignedRequest('evt_965_paid', 'invoice.paid', $paidApi, $now));
+        assertSame(200, $paid['status'], 'The real Paymos payment is acknowledged.');
+        $snap = $gateway->getSnapshotStore()->findByExternalOrderId('paymenter_965_0');
+        assertSame('paid', $snap['status'], 'The Paymos payment must be recorded as paid.');
+        assertSame('0xaudit_965', $snap['transaction_id'], 'The Paymos payment keeps its transaction for refunds.');
+        assertSame(0, count(ExtensionHelper::$payments), 'An already paid invoice must never get a second payment.');
+        $manual = array_filter($gateway->getRecordedNotes(), static fn (array $n): bool => str_contains($n['note'], 'Manual review'));
+        assertSame(1, count($manual), 'The admin must get a manual review note for the second payment.');
+    }
+
+    function testAuditManualReviewIsLoggedAsWarning(): void
+    {
+        resetGlobals();
+        $now = 1700530000;
+        $clock = static function () use (&$now): int { return $now; };
+        $db = new InMemoryDbDriver();
+        // CMSP-12: paid_late and manual review must survive LOG_LEVEL=warning.
+        Invoice::put(new Invoice(966, '30.00', 'USD', 'pending', 42));
+        $lateApi = auditInvoiceApi('966', 'inv_966', '30', 'expired');
+        $lateApi['paid_late_at'] = $now;
+        $logs = [];
+        $gateway = makeGateway(['mode' => 'live'], $db, new MockTransport([jsonResponse(200, $lateApi)]), $clock, true, true, $logs);
+        $gateway->getSnapshotStore()->save(auditSnapshot('966', 'inv_966', '30', $now, 'expired'));
+        $resp = $gateway->webhook(auditSignedRequest('evt_966_late', 'invoice.paid_late', $lateApi, $now));
+        assertSame(200, $resp['status'], 'invoice.paid_late is acknowledged.');
+        $warnings = array_filter($logs, static fn (array $l): bool => $l['level'] === 'warning' && str_contains($l['message'], 'paid_late'));
+        assertSame(1, count($warnings), 'The paid_late note must be logged at warning level.');
+    }
+
+    function testAuditFreshCreateIgnoresForeignFinalInvoice(): void
+    {
+        resetGlobals();
+        $now = 1700540000;
+        $clock = static function () use (&$now): int { return $now; };
+        $db = new InMemoryDbDriver();
+        // CMSP-13: a reinstalled Paymenter reuses invoice id 990; Paymos answers the old, already paid invoice.
+        $transport = new MockTransport([
+            jsonResponse(200, ['invoice_id' => 'inv_old_990', 'payment_url' => 'https://checkout.paymos.io/inv_old_990', 'status' => 'paid']),
+            jsonResponse(201, ['invoice_id' => 'inv_990_1', 'payment_url' => 'https://checkout.paymos.io/inv_990_1', 'status' => 'awaiting_client', 'expires_at' => $now + 1800]),
+        ]);
+        $gateway = makeGateway(['mode' => 'live'], $db, $transport, $clock);
+        $url = $gateway->pay(new Invoice(990, '100.00', 'USD', 'pending', 42), '100.00');
+        assertSame('https://checkout.paymos.io/inv_990_1', (string) $url, 'The foreign paid invoice must not become this checkout.');
+        assertSame(null, $gateway->getSnapshotStore()->findByPaymosInvoiceId('inv_old_990'), 'The foreign invoice must not be bound.');
+    }
+
+    function testAuditRefundLocallyGetsFloatAndRefundedAmountBlocksRefund(): void
+    {
+        resetGlobals();
+        $now = 1700550000;
+        $clock = static function () use (&$now): int { return $now; };
+        $db = new InMemoryDbDriver();
+        // CMSP-21: Paymenter master records a refund in refunded_amount, the status stays succeeded.
+        $invoice = new Invoice(707, '30.00', 'USD', 'paid', 42);
+        $invoice->remaining = '0';
+        $tx = new InvoiceTransaction(7, 707, '0xtx_707', '30.00');
+        $tx->refunded_amount = '30.00';
+        $invoice->transactions = [$tx];
+        Invoice::put($invoice);
+        $gateway = makeGateway(['mode' => 'live'], $db, new MockTransport([
+            jsonResponse(200, ['items' => [], 'next_cursor' => null]),
+            jsonResponse(200, ['items' => [], 'next_cursor' => null]),
+        ]), $clock);
+        $row = auditSnapshot('707', 'inv_707', '30', $now, 'paid');
+        $row['transaction_id'] = '0xtx_707';
+        $gateway->getSnapshotStore()->save($row);
+        $admin = new UserStub(1, new RoleStub(['admin.invoices.update']));
+        $panel = $gateway->refundPanel(new Request('', [], $admin), '707');
+        assertSame(200, $panel['status'], 'Refund panel must load.');
+        assertSame([], $panel['body']['available_modes'], 'A transaction already refunded in Paymenter must not offer another full refund.');
+    }
+
+    function testAuditCheckoutErrorsReachTheBuyer(): void
+    {
+        resetGlobals();
+        $now = 1700560000;
+        $clock = static function () use (&$now): int { return $now; };
+        // CMSP-22: Paymenter shows pay()'s View/HTML in the payment modal; an exception becomes "Server Error".
+        $db = new InMemoryDbDriver();
+        $gateway = makeGateway(['mode' => 'live'], $db, new MockTransport([]), $clock);
+        $row = auditSnapshot('960', 'inv_960', '25', $now, 'expired');
+        $gateway->getSnapshotStore()->save($row);
+        $gateway->getSnapshotStore()->markPaidLateNoted('paymenter_960_0', 'evt_late_960');
+        $html = $gateway->pay(new Invoice(960, '25.00', 'USD', 'pending', 42), '25.00');
+        assertTrue($html instanceof \Illuminate\Support\HtmlString, 'pay() must return buyer-facing HTML instead of throwing.');
+        assertTrue(
+            str_contains((string) $html, htmlspecialchars(Translation::text('replacement_blocked', 'en'), ENT_QUOTES, 'UTF-8')),
+            'The buyer must see the localized replacement_blocked text.'
+        );
+
+        $ruDb = new InMemoryDbDriver();
+        $ruGateway = makeGateway(['mode' => 'live'], $ruDb, new MockTransport([
+            auditProblem(422, 'unsupported_currency', 'Currency XYZ is not supported.'),
+        ]), $clock);
+        $ruGateway->setLocaleOverride('ru');
+        $ruHtml = $ruGateway->pay(new Invoice(961, '15.00', 'USD', 'pending', 42), '15.00');
+        assertTrue($ruHtml instanceof \Illuminate\Support\HtmlString, 'API errors must also reach the buyer as HTML.');
+        assertTrue(
+            str_contains((string) $ruHtml, htmlspecialchars(Translation::text('payment_cannot_be_used', 'ru'), ENT_QUOTES, 'UTF-8')),
+            'The buyer must see the Russian message.'
+        );
+    }
+
+    function testAuditNativeRefundInsideHostTransactionSendsNothing(): void
+    {
+        resetGlobals();
+        $now = 1700570000;
+        $clock = static function () use (&$now): int { return $now; };
+        $db = new InMemoryDbDriver();
+        // CMSP-23: Paymenter master calls Gateway::refund() inside DB::transaction() and rolls it back on throw.
+        $invoice = new Invoice(608, '49.90', 'USD', 'paid', 42);
+        $invoice->remaining = '0';
+        $tx = new InvoiceTransaction(8, 608, '0xtx_608', '49.90');
+        $invoice->transactions = [$tx];
+        Invoice::put($invoice);
+        $transport = new class implements TransportInterface {
+            public int $posts = 0;
+            public function request($method, $url, array $headers, $body, $timeoutSeconds): HttpResponse
+            {
+                if ($method === 'POST') {
+                    $this->posts++;
+                }
+                $path = (string) parse_url($url, PHP_URL_PATH);
+                if ($method === 'GET' && str_starts_with($path, '/v1/invoices/')) {
+                    return jsonResponse(200, [
+                        'invoice_id' => 'inv_608',
+                        'project_id' => 'prj_paymenter_live_001',
+                        'status' => 'paid',
+                        'is_test' => false,
+                        'order' => ['external_id' => 'paymenter_608_0', 'amount' => '49.9', 'currency' => 'USD'],
+                        'refund_summary' => ['can_refund_full' => true, 'can_refund_overpayment' => false, 'full_refund_amount' => '49.9'],
+                    ]);
+                }
+                if ($method === 'POST' && $path === '/v1/refunds') {
+                    return jsonResponse(201, ['withdrawal_id' => 'wd_608', 'status' => 'created']);
+                }
+                return jsonResponse(200, ['items' => [], 'next_cursor' => null]);
+            }
+        };
+        $gateway = makeGateway(['mode' => 'live'], $db, $transport, $clock);
+        $row = auditSnapshot('608', 'inv_608', '49.9', $now, 'paid');
+        $row['transaction_id'] = '0xtx_608';
+        $gateway->getSnapshotStore()->save($row);
+
+        $db->beginTransaction();
+        $message = '';
+        try {
+            ExtensionHelper::refund($gateway, $tx, '49.90');
+        } catch (\RuntimeException $e) {
+            $message = $e->getMessage();
+        }
+        $db->rollBack();
+        assertSame(0, $transport->posts, 'No refund may be sent while the host transaction can still roll back its intent.');
+        assertSame(Translation::text('refund_native_use_panel', 'en'), $message, 'The admin must be sent to the Paymos refunds panel.');
+        assertSame('paid', $invoice->status, 'The invoice stays paid.');
+    }
+
+    function testAuditZeroPriceLineKeepsProducts(): void
+    {
+        resetGlobals();
+        $now = 1700580000;
+        $clock = static function () use (&$now): int { return $now; };
+        // CMSP-37: a free domain or a 0.00 setup fee is a valid product line.
+        $db = new InMemoryDbDriver();
+        $transport = new MockTransport([
+            jsonResponse(201, ['invoice_id' => 'inv_zero_1', 'payment_url' => 'https://checkout.paymos.io/inv_zero_1', 'status' => 'awaiting_client']),
+            jsonResponse(201, ['invoice_id' => 'inv_neg_1', 'payment_url' => 'https://checkout.paymos.io/inv_neg_1', 'status' => 'awaiting_client']),
+        ]);
+        $gateway = makeGateway(['mode' => 'live'], $db, $transport, $clock);
+        $gateway->pay(new Invoice(990, '10.00', 'USD', 'pending', 42, null, [
+            new InvoiceItem('Free domain', '0.00', 1),
+            new InvoiceItem('Hosting', '10.00', 1),
+        ]), '10.00');
+        $body = json_decode((string) $transport->requests()[0]['body'], true);
+        assertSame(2, count($body['products'] ?? []), 'A zero-price line must not drop the product list.');
+        assertSame('0', $body['products'][0]['unit_amount'], 'The free line is sent with unit_amount 0.');
+
+        $gateway->pay(new Invoice(991, '10.00', 'USD', 'pending', 42, null, [
+            new InvoiceItem('Refund adjustment', '-5.00', 1),
+            new InvoiceItem('Hosting', '15.00', 1),
+        ]), '10.00');
+        $negBody = json_decode((string) $transport->requests()[1]['body'], true);
+        assertTrue(!isset($negBody['products']), 'A negative line still falls back to amount-only.');
+    }
+
+    function testAuditButtonTextSettingIsGone(): void
+    {
+        resetGlobals();
+        // CMSP-41: Paymenter shows the gateway name on the button; a button text setting changes nothing.
+        $gateway = makeGateway(['mode' => 'sandbox']);
+        $names = array_map(static fn (array $f): string => (string) $f['name'], $gateway->getConfig());
+        assertSame(['paymos_connect', 'mode'], $names, 'Only Connect and mode are configurable.');
+        foreach (Translation::supportedLocales() as $locale) {
+            $catalog = require dirname(__DIR__) . '/lang/' . $locale . '.php';
+            foreach (['pay_button', 'config_button_text_label', 'config_button_text_description'] as $dead) {
+                assertTrue(!array_key_exists($dead, $catalog), "Dead key {$dead} must be gone from {$locale}.php.");
+            }
+        }
+    }
+
+    function testAuditReconcilerToleratesJitterAndPages(): void
+    {
+        resetGlobals();
+        $now = 1700590000;
+        $clock = static function () use (&$now): int { return $now; };
+        $db = new InMemoryDbDriver();
+        $transport = new class implements TransportInterface {
+            /** @var list<string> */
+            public array $invoiceGets = [];
+            public function request($method, $url, array $headers, $body, $timeoutSeconds): HttpResponse
+            {
+                $path = (string) parse_url($url, PHP_URL_PATH);
+                if ($method === 'GET' && str_starts_with($path, '/v1/invoices/')) {
+                    $id = substr($path, strlen('/v1/invoices/'));
+                    $this->invoiceGets[] = $id;
+                    $platformRef = substr($id, strlen('inv_rp_'));
+                    return jsonResponse(200, [
+                        'invoice_id' => $id,
+                        'project_id' => 'prj_paymenter_live_001',
+                        'status' => 'awaiting_client',
+                        'is_test' => false,
+                        'order' => ['external_id' => 'paymenter_' . $platformRef . '_0', 'amount' => '5', 'currency' => 'USD'],
+                    ]);
+                }
+                return jsonResponse(200, ['items' => [], 'next_cursor' => null]);
+            }
+        };
+        $gateway = makeGateway(['mode' => 'live'], $db, $transport, $clock);
+        $total = 51;
+        for ($i = 1; $i <= $total; $i++) {
+            $ref = (string) (2000 + $i);
+            $row = auditSnapshot($ref, 'inv_rp_' . $ref, '5', $now, 'awaiting_client');
+            $row['created_at'] = $now - 7200 + $i;
+            $gateway->getSnapshotStore()->save($row);
+        }
+
+        // CMSP-42: Laravel's everyTenMinutes() start drifts by a second; a 599 s gap must not skip a run.
+        $gateway->runScheduledReconciliation(false);
+        $firstRun = count($transport->invoiceGets);
+        assertSame(50, $firstRun, 'One run polls one batch of 50.');
+        $now += 599;
+        $gateway->runScheduledReconciliation(false);
+        assertTrue(count($transport->invoiceGets) > $firstRun, 'A run 599 s later must not be throttled.');
+        assertSame($total, count(array_unique($transport->invoiceGets)), 'The second run must reach invoices beyond the first 50.');
+    }
+
+    function testAuditRefundPanelGetIsReadOnly(): void
+    {
+        resetGlobals();
+        $now = 1700600000;
+        $clock = static function () use (&$now): int { return $now; };
+        $db = new InMemoryDbDriver();
+        // CMSP-48: GET without CSRF must not run RefundDiscovery or reconcile.
+        $invoice = new Invoice(709, '20.00', 'USD', 'paid', 42);
+        $invoice->remaining = '0';
+        $invoice->transactions = [new InvoiceTransaction(9, 709, '0xtx_709', '20.00')];
+        Invoice::put($invoice);
+        $transport = new MockTransport([
+            jsonResponse(200, ['items' => [], 'next_cursor' => null]),
+            jsonResponse(200, ['items' => [], 'next_cursor' => null]),
+        ]);
+        $gateway = makeGateway(['mode' => 'live'], $db, $transport, $clock);
+        $row = auditSnapshot('709', 'inv_709', '20', $now, 'paid');
+        $row['transaction_id'] = '0xtx_709';
+        $gateway->getSnapshotStore()->save($row);
+        $admin = new UserStub(1, new RoleStub(['admin.invoices.update']));
+        $panel = $gateway->refundPanel(new Request('', [], $admin), '709');
+        assertSame(200, $panel['status'], 'The read-only panel still loads.');
+        assertSame(0, count($transport->requests()), 'A GET of the refund panel must not call Paymos.');
+    }
+
+    function testAuditConnectShowsServerReason(): void
+    {
+        resetGlobals();
+        // CMSP-49: APP_URL=http:// behind a TLS proxy passes the browser check but not the server one.
+        $db = new InMemoryDbDriver();
+        $gateway = makeGateway(['mode' => 'sandbox'], $db, new MockTransport([]), null, false);
+        $gateway->setSourceUrlOverride('http://billing.example.com');
+        $admin = new UserStub(3, new RoleStub(['admin.gateways.update']));
+        $resp = $gateway->connectStart(new Request('{}', ['X-CSRF-TOKEN' => 'tok'], $admin, 'tok'));
+        assertSame(400, $resp['status'], 'A non-HTTPS Paymenter URL is refused.');
+        assertSame(Translation::text('connect_https_required', 'en'), $resp['body']['error'] ?? null, 'The refusal must name the HTTPS requirement.');
+
+        $blade = (string) file_get_contents(dirname(__DIR__) . '/resources/views/connect.blade.php');
+        $uses = substr_count($blade, 'connectErrorText(err)') - substr_count($blade, 'function connectErrorText(err)');
+        assertSame(2, $uses, 'Both Connect start and poll failures must show the server reason.');
+    }
+
     $tests = [
+        'audit_final_4xx_ends_creating_intent' => __NAMESPACE__ . '\\testAuditFinal4xxEndsCreatingIntent',
+        'audit_stale_expires_at_reads_invoice_back' => __NAMESPACE__ . '\\testAuditStaleExpiresAtReadsInvoiceBack',
+        'audit_paid_elsewhere_keeps_later_paymos_payment' => __NAMESPACE__ . '\\testAuditPaidElsewhereKeepsLaterPaymosPayment',
+        'audit_manual_review_is_logged_as_warning' => __NAMESPACE__ . '\\testAuditManualReviewIsLoggedAsWarning',
+        'audit_fresh_create_ignores_foreign_final_invoice' => __NAMESPACE__ . '\\testAuditFreshCreateIgnoresForeignFinalInvoice',
+        'audit_refund_locally_float_and_refunded_amount' => __NAMESPACE__ . '\\testAuditRefundLocallyGetsFloatAndRefundedAmountBlocksRefund',
+        'audit_checkout_errors_reach_the_buyer' => __NAMESPACE__ . '\\testAuditCheckoutErrorsReachTheBuyer',
+        'audit_native_refund_inside_host_transaction' => __NAMESPACE__ . '\\testAuditNativeRefundInsideHostTransactionSendsNothing',
+        'audit_zero_price_line_keeps_products' => __NAMESPACE__ . '\\testAuditZeroPriceLineKeepsProducts',
+        'audit_button_text_setting_is_gone' => __NAMESPACE__ . '\\testAuditButtonTextSettingIsGone',
+        'audit_reconciler_tolerates_jitter_and_pages' => __NAMESPACE__ . '\\testAuditReconcilerToleratesJitterAndPages',
+        'audit_refund_panel_get_is_read_only' => __NAMESPACE__ . '\\testAuditRefundPanelGetIsReadOnly',
+        'audit_connect_shows_server_reason' => __NAMESPACE__ . '\\testAuditConnectShowsServerReason',
         'metadata_boot_and_config_locality' => __NAMESPACE__ . '\\testMetadataBootAndConfigLocality',
         'credential_store_encryption_and_validation' => __NAMESPACE__ . '\\testCredentialStoreEncryptionAndValidation',
         'connect_flow_and_admin_authorization_403' => __NAMESPACE__ . '\\testConnectFlowAndAdminAuthorization403',
@@ -3085,15 +3527,21 @@ PHP;
     ];
 
     $passed = 0;
+    $failed = 0;
     foreach ($tests as $name => $fn) {
         try {
             $fn();
             $passed++;
             fwrite(STDOUT, "[PASS] {$name}\n");
         } catch (\Throwable $e) {
+            $failed++;
             fwrite(STDERR, "[FAIL] {$name}: {$e->getMessage()} ({$e->getFile()}:{$e->getLine()})\n");
-            exit(1);
         }
+    }
+
+    if ($failed > 0) {
+        fwrite(STDERR, "\n{$failed} Paymenter Paymos test suite(s) failed, {$passed} passed.\n");
+        exit(1);
     }
 
     fwrite(STDOUT, "\nAll {$passed} Paymenter Paymos test suites passed.\n");

@@ -8,6 +8,26 @@ The public release history also lives at [paymos.io/changelog](https://paymos.io
 
 ## [Unreleased]
 
+## [1.0.6] - 2026-11-28
+
+- fix(paymenter): buyer-facing checkout errors, refund safety, snapshot status
+
+### Removed
+- The `button_text` setting and its `pay_button` / `config_button_text_*` strings: Paymenter labels the payment button with the gateway name, so the setting changed nothing.
+
+### Fixed
+- Checkout errors (blocked replacement, `paid_late`, API `4xx`) now reach the buyer as a localized message in the payment modal instead of a "Server Error" page.
+- A definitive `4xx` on invoice creation ends the pending attempt; the next payment creates a new invoice for the current amount. A new attempt answered with an already final invoice is not bound to the Paymenter invoice.
+- A passed local `expires_at` reads the invoice back from Paymos before replacing it, so a buyer who already picked a network keeps the same payment link.
+- An invoice paid another way no longer hides a later Paymos payment: non-final events record their real status, and the Paymos payment is recorded with its transaction and a manual-review note.
+- Manual review and `paid_late` notes are logged at `warning`, so they survive `LOG_LEVEL=warning`.
+- Line items priced at `0.00` are sent in `products[]` instead of dropping the whole list.
+- Full refund projection passes a `float` to `ExtensionHelper::refundLocally()` (Paymenter master signature) and treats a transaction with `refunded_amount` as already refunded.
+- `Gateway::refund()` called inside Paymenter's database transaction sends nothing and points the admin to the Paymos refunds panel, so a rolled-back transaction can no longer erase the record of a refund already sent.
+- The refunds panel served over `GET` (route and invoice page) only reads local state. Refunds created in the Paymos dashboard are found by the 10-minute schedule; a plugin refund is updated by the refund webhook, the schedule, or the CSRF-protected "Check status".
+- The 10-minute reconciliation tolerates a 30-second schedule drift instead of skipping every other run, and pages through more than 50 open invoices.
+- Connect shows the server's reason (for example the HTTPS requirement) instead of a generic error.
+
 ## [1.0.5] - 2026-11-27
 
 - chore(cms): register Blesta Marketplace #466, update store status, fix Paymenter arch lint [skip ecosystem release]

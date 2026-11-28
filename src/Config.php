@@ -12,10 +12,8 @@ final class Config
     public const DEFAULT_BASE_URL = CredentialSet::DEFAULT_BASE_URL;
     public const ENV_LIVE = 'live';
     public const ENV_SANDBOX = 'sandbox';
-    public const DEFAULT_BUTTON_TEXT = 'Pay with Paymos';
 
     private string $mode;
-    private string $buttonText;
 
     /** @var array<string, array<string, mixed>> */
     private array $environments;
@@ -23,10 +21,9 @@ final class Config
     /**
      * @param array<string, array<string, mixed>> $environments
      */
-    private function __construct(string $mode, string $buttonText, array $environments)
+    private function __construct(string $mode, array $environments)
     {
         $this->mode = $mode;
-        $this->buttonText = $buttonText;
         $this->environments = $environments;
     }
 
@@ -34,16 +31,15 @@ final class Config
      * Build validated config for active checkout/API calls.
      * Secrets come exclusively from the Connect-provisioned CredentialStore envelope.
      *
-     * @param array<string, mixed> $settings    Non-secret settings read directly inside Paymos::config(): mode, button_text.
+     * @param array<string, mixed> $settings    Non-secret settings read directly inside Paymos::config(): mode.
      * @param array<string, mixed> $credentials Environments loaded from CredentialStore::loadCredentials().
      */
     public static function fromSettings(array $settings, array $credentials): self
     {
         $mode = self::resolveMode($settings);
-        $buttonText = self::resolveButtonText($settings);
         $normalized = CredentialSet::normalize($credentials);
 
-        $config = new self($mode, $buttonText, $normalized);
+        $config = new self($mode, $normalized);
         $config->assertEnvironmentConfigured($mode);
 
         $secrets = $config->webhookSecrets();
@@ -63,10 +59,9 @@ final class Config
     public static function forWebhook(array $settings, array $credentials): self
     {
         $mode = self::resolveMode($settings);
-        $buttonText = self::resolveButtonText($settings);
         $normalized = CredentialSet::normalize($credentials);
 
-        $config = new self($mode, $buttonText, $normalized);
+        $config = new self($mode, $normalized);
         if ($config->webhookSecrets() === []) {
             throw new \InvalidArgumentException('Paymos is not connected: at least one environment credential set is required.');
         }
@@ -84,10 +79,6 @@ final class Config
         return $this->mode === self::ENV_SANDBOX;
     }
 
-    public function buttonText(): string
-    {
-        return $this->buttonText;
-    }
 
     public function hasEnvironment(string $environment): bool
     {
@@ -221,7 +212,6 @@ final class Config
 
         return [
             'mode' => $this->mode,
-            'buttonText' => $this->buttonText,
             'environments' => $masked,
         ];
     }
@@ -266,17 +256,6 @@ final class Config
         return self::normalizeEnvironment($raw);
     }
 
-    /**
-     * @param array<string, mixed> $settings
-     */
-    private static function resolveButtonText(array $settings): string
-    {
-        $raw = isset($settings['button_text']) && is_scalar($settings['button_text'])
-            ? trim((string) $settings['button_text'])
-            : '';
-
-        return $raw === '' ? self::DEFAULT_BUTTON_TEXT : $raw;
-    }
 
     private static function normalizeEnvironment(string $environment): string
     {

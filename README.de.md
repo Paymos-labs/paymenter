@@ -55,7 +55,7 @@ Jeder Händler lädt dasselbe Paket ohne eingebettete Zugangsdaten, Projekt-ID o
 https://<your-paymenter-panel>/extensions/gateways/paymos/webhook
 ```
 
-Nach dem Verbinden zeigen die Gateway-Einstellungen ausschließlich **Verbindung** (Status Verbinden / Neu verbinden), **Modus** (`Sandbox` oder `Live`) und **Buttontext** — niemals manuelle Felder für API-Schlüssel, API-Secret, Projekt-ID oder Webhook-Secret.
+Nach dem Verbinden zeigen die Gateway-Einstellungen ausschließlich **Verbindung** (Status Verbinden / Neu verbinden) und **Modus** (`Sandbox` oder `Live`) — niemals manuelle Felder für API-Schlüssel, API-Secret, Projekt-ID oder Webhook-Secret.
 
 ## Speicherung von Geheimnissen
 

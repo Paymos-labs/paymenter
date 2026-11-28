@@ -11,6 +11,8 @@ final class SnapshotStore
 {
     public const TABLE = 'paymos_invoice_snapshots';
     public const STATUS_CREATING = 'creating';
+    /** Paymos refused the create for good (4xx) or answered with another installation's invoice. */
+    public const STATUS_CREATE_FAILED = 'create_failed';
     public const STATUS_INVOICE_MISSING = 'paymenter_invoice_missing';
 
     private DbDriverInterface $db;
@@ -189,10 +191,12 @@ final class SnapshotStore
 
     /**
      * Return up to $limit non-final snapshots created at or after $sinceTimestamp (for 24h reconciler sweep).
+     * `$after` (the last row of the previous batch) continues to older rows on the next run.
      *
+     * @param array{created_at: int, external_order_id: string}|null $after
      * @return list<array<string, mixed>>
      */
-    public function findUnpaidRecent(int $limit = 50, int $sinceTimestamp = 0): array
+    public function findUnpaidRecent(int $limit = 50, int $sinceTimestamp = 0, ?array $after = null): array
     {
         $this->db->ensureSchema();
         $rows = $this->db->selectAll(
@@ -202,11 +206,17 @@ final class SnapshotStore
             null,
             ['created_at' => max(0, $sinceTimestamp)]
         );
+        // Newest first, ties by external_order_id, so a cursor from the previous batch is stable.
+        usort($rows, static fn (array $a, array $b): int => ((int) ($b['created_at'] ?? 0) <=> (int) ($a['created_at'] ?? 0))
+            ?: strcmp((string) ($b['external_order_id'] ?? ''), (string) ($a['external_order_id'] ?? '')));
 
         $unpaid = [];
         foreach ($rows as $row) {
+            if ($after !== null && !self::isAfterCursor($row, $after)) {
+                continue;
+            }
             $status = strtolower(trim((string) ($row['status'] ?? '')));
-            if ($status === self::STATUS_CREATING || $status === self::STATUS_INVOICE_MISSING) {
+            if ($status === self::STATUS_CREATING || $status === self::STATUS_CREATE_FAILED || $status === self::STATUS_INVOICE_MISSING) {
                 continue;
             }
             if (StatusMapper::isFinalStatus($status)) {
@@ -219,6 +229,28 @@ final class SnapshotStore
         }
 
         return $unpaid;
+    }
+
+    /**
+     * @param array<string, mixed>                                $row
+     * @param array{created_at: int, external_order_id: string}  $cursor
+     */
+    private static function isAfterCursor(array $row, array $cursor): bool
+    {
+        $createdAt = (int) ($row['created_at'] ?? 0);
+        if ($createdAt !== (int) $cursor['created_at']) {
+            return $createdAt < (int) $cursor['created_at'];
+        }
+
+        return strcmp((string) ($row['external_order_id'] ?? ''), (string) $cursor['external_order_id']) < 0;
+    }
+
+    /**
+     * Ends a `creating` intent that must never be replayed: the next checkout cuts a new attempt.
+     */
+    public function markCreateFailed(string $externalOrderId): void
+    {
+        $this->updateStatusByExternalOrderId($externalOrderId, self::STATUS_CREATE_FAILED);
     }
 
     public function markCompleted(string $externalOrderId, string $transactionId, string $finalStatus): void

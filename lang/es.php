@@ -3,7 +3,6 @@
 declare(strict_types=1);
 
 return [
-    'pay_button' => 'Pagar con Paymos',
     'payment_cannot_be_used' => 'Este método de pago no está disponible para esta factura.',
     'payment_unavailable' => 'Paymos no está disponible temporalmente. Ponte en contacto con soporte.',
     'replacement_blocked' => 'El proveedor tiene que revisar este pedido antes de que puedas continuar con el pago. Ponte en contacto con soporte.',
@@ -24,8 +23,6 @@ return [
     'config_connection_label' => 'Conexión',
     'config_connection_connected' => 'Conectado — las credenciales están cifradas en esta instalación de Paymenter',
     'config_connection_disconnected' => 'No conectado — haga clic en «Conectar Paymos» y apruebe esta instalación',
-    'config_button_text_label' => 'Texto del botón',
-    'config_button_text_description' => 'Texto que se muestra en el botón de pago de la factura de Paymenter.',
     'refund_panel_title' => 'Reembolsos de Paymos',
     'refund_label_operation' => 'Operación',
     'refund_label_type' => 'Tipo',
@@ -39,6 +36,7 @@ return [
     'refund_failed' => 'La solicitud de reembolso ha fallado.',
     'refund_reconnect_hint' => 'Los reembolsos con Paymos no están disponibles en esta conexión: vuelva a conectar la pasarela con «Conectar Paymos» en los ajustes de pasarelas.',
     'refund_native_in_progress' => 'El reembolso de Paymos está en curso. Sígalo en el panel «Reembolsos de Paymos» de esta factura; la pasarela registrará el reembolso en Paymenter cuando se complete.',
+    'refund_native_use_panel' => 'Inicie el reembolso en el panel «Reembolsos de Paymos» de esta factura. No se envió nada a Paymos.',
     'refund_native_failed' => 'El reembolso de Paymos ha fallado. Revise el motivo más abajo y el panel «Reembolsos de Paymos» de la factura.',
     'refund_external_badge' => 'Creado en el panel de Paymos',
     'refund_empty' => 'Todavía no se han solicitado reembolsos de Paymos para esta factura.',

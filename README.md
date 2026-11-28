@@ -55,7 +55,7 @@ Every merchant downloads the same package with no embedded credentials, project 
 https://<your-paymenter-panel>/extensions/gateways/paymos/webhook
 ```
 
-After connecting, the gateway settings expose only **Connection** (Connect / Reconnect status), **Mode** (`Sandbox` or `Live`), and **Button Text** — never manual API key, API secret, project ID, or webhook secret fields.
+After connecting, the gateway settings expose only **Connection** (Connect / Reconnect status) and **Mode** (`Sandbox` or `Live`) — never manual API key, API secret, project ID, or webhook secret fields.
 
 ## Secret storage
 

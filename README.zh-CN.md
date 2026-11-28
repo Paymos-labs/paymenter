@@ -55,7 +55,7 @@
 https://<your-paymenter-panel>/extensions/gateways/paymos/webhook
 ```
 
-连接完成后，网关设置页仅展示**连接**（连接 / 重新连接状态）、**模式**（`Sandbox` 或 `Live`）和**按钮文字**三项——绝不提供手动输入 API 密钥、API Secret、项目 ID 或 Webhook 密钥的字段。
+连接完成后，网关设置页仅展示**连接**（连接 / 重新连接状态）和**模式**（`Sandbox` 或 `Live`）两项——绝不提供手动输入 API 密钥、API Secret、项目 ID 或 Webhook 密钥的字段。
 
 ## 密钥安全存储
 

@@ -15,6 +15,8 @@ final class Reconciler
     public const LOOKBACK_SECONDS = 86400;
     public const BATCH_LIMIT = 50;
     public const THROTTLE_KEY = 'reconcile_last_run';
+    public const SCHEDULE_JITTER_SECONDS = 30;
+    private const CURSOR_KEY = 'reconcile_cursor';
 
     private Config $config;
     private CredentialStore $credentialStore;
@@ -71,7 +73,18 @@ final class Reconciler
 
         $this->credentialStore->setSetting(self::THROTTLE_KEY, (string) $now);
 
-        $rows = $this->snapshots->findUnpaidRecent(self::BATCH_LIMIT, $now - self::LOOKBACK_SECONDS);
+        // More than one batch of open invoices: each run continues where the previous one stopped,
+        // and starts again from the newest once the end is reached.
+        $rows = $this->snapshots->findUnpaidRecent(self::BATCH_LIMIT, $now - self::LOOKBACK_SECONDS, $this->readCursor());
+        $last = $rows === [] ? null : $rows[count($rows) - 1];
+        if (count($rows) >= self::BATCH_LIMIT && $last !== null) {
+            $this->credentialStore->setSetting(self::CURSOR_KEY, (string) json_encode([
+                'created_at' => (int) ($last['created_at'] ?? 0),
+                'external_order_id' => (string) ($last['external_order_id'] ?? ''),
+            ]));
+        } else {
+            $this->credentialStore->deleteSetting(self::CURSOR_KEY);
+        }
         $appliedCount = 0;
 
         foreach ($rows as $row) {
@@ -139,12 +152,34 @@ final class Reconciler
         return $appliedCount;
     }
 
+    /**
+     * The Laravel schedule fires every 10 minutes, but each start lands a second or two apart;
+     * a strict 600 s check would skip every other run when one start drifts.
+     */
     private function isDue(int $now): bool
     {
         $raw = $this->credentialStore->getSetting(self::THROTTLE_KEY);
         $lastRun = ($raw !== null && is_numeric($raw)) ? (int) $raw : 0;
 
-        return $lastRun <= 0 || ($now - $lastRun) >= self::THROTTLE_SECONDS;
+        return $lastRun <= 0 || ($now - $lastRun) >= self::THROTTLE_SECONDS - self::SCHEDULE_JITTER_SECONDS;
+    }
+
+    /**
+     * @return array{created_at: int, external_order_id: string}|null
+     */
+    private function readCursor(): ?array
+    {
+        $raw = $this->credentialStore->getSetting(self::CURSOR_KEY);
+        $decoded = $raw !== null && $raw !== '' ? json_decode($raw, true) : null;
+        if (!is_array($decoded)
+            || !isset($decoded['created_at'], $decoded['external_order_id'])
+            || !is_numeric($decoded['created_at'])
+            || !is_string($decoded['external_order_id'])
+        ) {
+            return null;
+        }
+
+        return ['created_at' => (int) $decoded['created_at'], 'external_order_id' => $decoded['external_order_id']];
     }
 
     /**

@@ -55,7 +55,7 @@ Todos los comercios descargan exactamente el mismo paquete sin credenciales, IDs
 https://<your-paymenter-panel>/extensions/gateways/paymos/webhook
 ```
 
-Una vez conectado, los ajustes de la pasarela muestran únicamente **Conexión** (estado Conectar / Reconectar), **Modo** (`Sandbox` o `Live`) y **Texto del botón**, nunca campos manuales de clave de API, secreto de API, ID de proyecto ni secreto de webhook.
+Una vez conectado, los ajustes de la pasarela muestran únicamente **Conexión** (estado Conectar / Reconectar) y **Modo** (`Sandbox` o `Live`), nunca campos manuales de clave de API, secreto de API, ID de proyecto ni secreto de webhook.
 
 ## Almacenamiento de secretos
 

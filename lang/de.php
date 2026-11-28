@@ -3,7 +3,6 @@
 declare(strict_types=1);
 
 return [
-    'pay_button' => 'Mit Paymos bezahlen',
     'payment_cannot_be_used' => 'Diese Zahlungsart ist für diese Rechnung nicht verfügbar.',
     'payment_unavailable' => 'Paymos ist vorübergehend nicht verfügbar. Bitte wenden Sie sich an den Support.',
     'replacement_blocked' => 'Bevor Sie weiter bezahlen können, muss der Anbieter diese Bestellung prüfen. Bitte wenden Sie sich an den Support.',
@@ -24,8 +23,6 @@ return [
     'config_connection_label' => 'Verbindung',
     'config_connection_connected' => 'Verbunden — Zugangsdaten sind in dieser Paymenter-Installation verschlüsselt gespeichert',
     'config_connection_disconnected' => 'Nicht verbunden — klicken Sie auf „Paymos verbinden“ und bestätigen Sie diese Installation',
-    'config_button_text_label' => 'Buttontext',
-    'config_button_text_description' => 'Text auf der Zahlungsschaltfläche der Paymenter-Rechnung.',
     'refund_panel_title' => 'Paymos-Erstattungen',
     'refund_label_operation' => 'Vorgang',
     'refund_label_type' => 'Typ',
@@ -39,6 +36,7 @@ return [
     'refund_failed' => 'Die Erstattungsanfrage ist fehlgeschlagen.',
     'refund_reconnect_hint' => 'Erstattungen über Paymos sind für diese Verbindung nicht verfügbar: Verbinden Sie das Gateway in den Gateway-Einstellungen über „Paymos verbinden“ neu.',
     'refund_native_in_progress' => 'Die Paymos-Erstattung läuft noch. Verfolgen Sie den Vorgang im Bereich „Paymos-Erstattungen“ auf dieser Rechnung; das Gateway trägt die Erstattung nach Abschluss in Paymenter ein.',
+    'refund_native_use_panel' => 'Starten Sie die Erstattung im Bereich „Paymos-Erstattungen“ auf dieser Rechnung. An Paymos wurde nichts gesendet.',
     'refund_native_failed' => 'Die Paymos-Erstattung ist fehlgeschlagen. Prüfen Sie den Grund unten und den Bereich „Paymos-Erstattungen“ auf der Rechnung.',
     'refund_external_badge' => 'Im Paymos-Dashboard erstellt',
     'refund_empty' => 'Für diese Rechnung wurden noch keine Paymos-Erstattungen angefordert.',

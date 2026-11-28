@@ -3,7 +3,6 @@
 declare(strict_types=1);
 
 return [
-    'pay_button' => '通过 Paymos 付款',
     'payment_cannot_be_used' => '此支付方式不适用于该账单。',
     'payment_unavailable' => 'Paymos 暂时不可用，请联系客服。',
     'replacement_blocked' => '商家需要先审核这笔订单，之后才能继续付款。请联系客服。',
@@ -24,8 +23,6 @@ return [
     'config_connection_label' => '连接',
     'config_connection_connected' => '已连接 — 密钥已在此 Paymenter 安装中加密存储',
     'config_connection_disconnected' => '未连接 — 请点击「连接 Paymos」并批准此安装',
-    'config_button_text_label' => '按钮文字',
-    'config_button_text_description' => '显示在 Paymenter 账单付款按钮上的文字。',
     'refund_panel_title' => 'Paymos 退款',
     'refund_label_operation' => '操作',
     'refund_label_type' => '类型',
@@ -39,6 +36,7 @@ return [
     'refund_failed' => '退款请求失败。',
     'refund_reconnect_hint' => '当前连接不支持通过 Paymos 退款：请在支付网关设置中点击「连接 Paymos」重新连接。',
     'refund_native_in_progress' => 'Paymos 退款正在处理中。请在此账单的「Paymos 退款」面板中查看进度；转账完成后插件会自动记录到 Paymenter。',
+    'refund_native_use_panel' => '请在此账单的「Paymos 退款」面板中发起退款。尚未向 Paymos 发送任何请求。',
     'refund_native_failed' => 'Paymos 退款失败。请查看下方原因以及账单页面的「Paymos 退款」面板。',
     'refund_external_badge' => '在 Paymos 控制台创建',
     'refund_empty' => '此账单尚未发起任何 Paymos 退款。',

@@ -741,7 +741,11 @@ final class RefundAdapter implements NativeRefundProjectorInterface
     }
 
     /**
-     * Build the admin Refund panel view-model for a Paymenter invoice (after reconciling & discovering refunds).
+     * Build the admin Refund panel view-model for a Paymenter invoice from local state.
+     *
+     * Read-only: the panel is served over GET (route and Filament page) without a CSRF token,
+     * so it never runs RefundDiscovery or reconcile. Those run in the 10-minute schedule, on the
+     * refund webhook and on the CSRF-protected "Check status" POST.
      *
      * @return array<string, mixed>
      */
@@ -752,15 +756,6 @@ final class RefundAdapter implements NativeRefundProjectorInterface
         $paymentKey = trim((string) $invoiceId);
         $resolvedLocale = Translation::resolveLocale($locale);
         $refundCopyLocale = RefundCopy::locale($resolvedLocale);
-
-        // Refresh external Dashboard refunds before reading panel state.
-        $paidSnapshots = $this->snapshots->findPaidByPlatformRef($paymentKey);
-        if ($paidSnapshots !== []) {
-            $env = strtolower(trim((string) ($paidSnapshots[0]['environment'] ?? '')));
-            if ($env !== '' && $this->config->hasEnvironment($env)) {
-                $this->discoverExternal($env);
-            }
-        }
 
         return $this->store->withPaymentLock($paymentKey, function () use ($paymentKey, $resolvedLocale, $refundCopyLocale): array {
             $tokens = [
@@ -773,16 +768,6 @@ final class RefundAdapter implements NativeRefundProjectorInterface
             $intentRows = [];
 
             foreach ($this->store->forPayment($paymentKey) as $intent) {
-                if (!in_array($intent->cashState(), [RefundStates::COMPLETED, RefundStates::FAILED, RefundStates::CANCELLED], true)
-                    || ($intent->cashState() === RefundStates::COMPLETED && $intent->projectionState() !== RefundStates::PROJECTION_APPLIED)) {
-                    try {
-                        $this->coordinator($intent)->reconcile($intent->operationId());
-                        $intent = $this->store->getIntent($intent->operationId());
-                    } catch (\Throwable $e) {
-                        $this->log('warning', 'Paymos panel reconcile skipped: ' . $e->getMessage());
-                    }
-                }
-
                 if ($this->store->blocksNewIntent($intent)) {
                     $tokens[$intent->mode()] = (string) $intent->toArray()['request_token'];
                     $blocked = true;
@@ -1108,7 +1093,12 @@ final class RefundAdapter implements NativeRefundProjectorInterface
                 throw new \RuntimeException('refund_native_api_unavailable');
             }
             if (class_exists(ExtensionHelper::class) && method_exists(ExtensionHelper::class, 'refundLocally')) {
-                ExtensionHelper::refundLocally($transaction, $amount);
+                // Upstream signature: refundLocally(InvoiceTransaction $transaction, float $amount).
+                $decimal = AmountGuard::normalizeDecimal($amount);
+                if ($decimal === null || $decimal === '0' || $decimal[0] === '-') {
+                    throw new \RuntimeException('refund_native_api_unavailable');
+                }
+                ExtensionHelper::refundLocally($transaction, (float) $decimal);
                 return ['ok' => true];
             }
 
@@ -1270,6 +1260,14 @@ final class RefundAdapter implements NativeRefundProjectorInterface
             $txStatus = isset($transaction->status) ? strtolower(trim((string) ($transaction->status instanceof \BackedEnum ? $transaction->status->value : $transaction->status))) : '';
             if ($txStatus === 'refunded' || !empty($transaction->is_refunded)) {
                 $transactionRefunded = true;
+            }
+            // Paymenter master records refunds in refunded_amount and keeps the status; any refund
+            // already on the original transaction rules out another full refund.
+            if (isset($transaction->refunded_amount) && is_scalar($transaction->refunded_amount)) {
+                $refunded = AmountGuard::normalizeDecimal((string) $transaction->refunded_amount);
+                if ($refunded !== null && $refunded !== '0' && $refunded[0] !== '-') {
+                    $transactionRefunded = true;
+                }
             }
         }
         if (!$transactionRefunded && class_exists(InvoiceTransaction::class) && method_exists(InvoiceTransaction::class, 'where')) {

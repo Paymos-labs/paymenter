@@ -35,7 +35,7 @@ use Paymenter\Extensions\Gateways\Paymos\Internal\Translation;
 #[ExtensionMeta(
     name: 'Paymos',
     description: 'Accept USDT, USDC, USD1, DAI stablecoins and gold-backed XAUT payments via Paymos.',
-    version: '1.0.5',
+    version: '1.0.6',
     author: 'Paymos Labs',
     url: 'https://paymos.io',
     icon: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0Ij48cmVjdCB3aWR0aD0iNjQiIGhlaWdodD0iNjQiIHJ4PSIxNCIgZmlsbD0iIzBCMEYxQSIvPjxwYXRoIGQ9Ik0yMiAxOGgxNGM3LjczIDAgMTMgNC43IDEzIDEycy01LjI3IDEyLTEzIDEyaC03djhoLTdWMTh6bTcgMTdoNi42YzMuODcgMCA2LjQtMi4wMiA2LjQtNXMtMi41My01LTYuNC01SDI5djEweiIgZmlsbD0iI0Y2NzYxNyIvPjwvc3ZnPg=='
@@ -133,7 +133,8 @@ class Paymos extends Gateway
     }
 
     /**
-     * Connect-only settings: Filament Placeholder for One-Click Connect Paymos, mode, and button_text.
+     * Connect-only settings: Filament Placeholder for One-Click Connect Paymos and mode.
+     * Paymenter labels the payment button with the gateway name, so there is no button text setting.
      * ZERO manual API key, API secret, project ID, or webhook secret fields.
      *
      * @param array<string, mixed> $values
@@ -176,14 +177,6 @@ class Paymos extends Gateway
                     Config::ENV_LIVE => Translation::text('config_mode_live', $locale),
                 ],
             ],
-            [
-                'name' => 'button_text',
-                'label' => Translation::text('config_button_text_label', $locale),
-                'type' => 'text',
-                'description' => Translation::text('config_button_text_description', $locale),
-                'required' => false,
-                'default' => Config::DEFAULT_BUTTON_TEXT,
-            ],
         ];
     }
 
@@ -211,10 +204,13 @@ class Paymos extends Gateway
 
     /**
      * Create or safely reuse/replace a Paymos hosted invoice and return its payment URL.
+     * A checkout the buyer cannot use comes back as HTML (Paymenter renders a non-string
+     * pay() result in the payment modal); an exception would reach the buyer as "Server Error".
      *
      * @param mixed $total
+     * @return string|\Illuminate\Support\HtmlString
      */
-    public function pay(Invoice $invoice, $total): string
+    public function pay(Invoice $invoice, $total)
     {
         $config = $this->loadActiveConfig();
         $checkout = new CheckoutService(
@@ -243,13 +239,20 @@ class Paymos extends Gateway
                 'items' => $items,
                 'locale' => $locale,
             ]);
-        } catch (InvoiceReplacementBlockedException $e) {
-            throw new \RuntimeException(CheckoutService::safeFailureMessage($e, $locale), 0, $e);
-        } catch (ApiException $e) {
-            throw new \RuntimeException(CheckoutService::safeFailureMessage($e, $locale), $e->statusCode(), $e);
+        } catch (InvoiceReplacementBlockedException | ApiException $e) {
+            return self::checkoutErrorHtml(CheckoutService::safeFailureMessage($e, $locale));
         }
 
         return $result['payment_url'];
+    }
+
+    private static function checkoutErrorHtml(string $message): \Illuminate\Support\HtmlString
+    {
+        return new \Illuminate\Support\HtmlString(
+            '<div class="paymos-checkout-error" role="alert">'
+            . htmlspecialchars($message, ENT_QUOTES, 'UTF-8')
+            . '</div>'
+        );
     }
 
     /**
@@ -294,6 +297,13 @@ class Paymos extends Gateway
      */
     public function refund(InvoiceTransaction $transaction, $amount): bool
     {
+        // Paymenter calls refund() inside DB::transaction() and rolls it back when it throws. A
+        // Paymos refund finishes later, so this call always throws until then: the refund would be
+        // sent while its intent is rolled back. Nothing is sent; the panel tracks the refund.
+        if ($this->resolveDbDriver()->inTransaction()) {
+            throw new \RuntimeException(Translation::text('refund_native_use_panel', $this->resolveLocale()));
+        }
+
         $config = $this->loadWebhookConfig();
         $authorize = $this->adminAuthorizer ?: function (): void {
             if (class_exists(\Illuminate\Support\Facades\Auth::class)) {
@@ -339,7 +349,9 @@ class Paymos extends Gateway
 
             return $this->respondJson(200, $data);
         } catch (\InvalidArgumentException $e) {
-            return $this->respondJson(400, ['error' => Config::redactSecrets($e->getMessage())]);
+            // Starting Connect only rejects arguments for the installation URL (not HTTPS or not a
+            // clean origin, e.g. APP_URL=http:// behind a TLS proxy): say so in the admin's language.
+            return $this->respondJson(400, ['error' => Translation::text('connect_https_required', $this->resolveLocale())]);
         } catch (\Throwable $e) {
             return $this->respondJson(400, [
                 'error' => Translation::text('connect_failed', $this->resolveLocale()),
@@ -622,7 +634,6 @@ class Paymos extends Gateway
     {
         return [
             'mode' => $this->config('mode'),
-            'button_text' => $this->config('button_text'),
         ];
     }
 
@@ -723,6 +734,14 @@ class Paymos extends Gateway
             $total = $this->extractInvoiceTotal($invoice);
             $currency = $this->extractInvoiceCurrency($invoice);
             $status = strtolower(trim((string) ($invoice->status ?? '')));
+            $transactionIds = [];
+            if (isset($invoice->transactions) && is_iterable($invoice->transactions)) {
+                foreach ($invoice->transactions as $transaction) {
+                    if (is_object($transaction) && isset($transaction->transaction_id) && is_scalar($transaction->transaction_id)) {
+                        $transactionIds[] = (string) $transaction->transaction_id;
+                    }
+                }
+            }
 
             return [
                 'id' => (string) $invoice->id,
@@ -730,6 +749,7 @@ class Paymos extends Gateway
                 'total' => $total,
                 'currency' => $currency,
                 'is_paid' => ($status === 'paid'),
+                'transaction_ids' => $transactionIds,
             ];
         };
     }
@@ -751,7 +771,9 @@ class Paymos extends Gateway
                 'note' => $safeNote,
                 'context' => $context,
             ];
-            ($this->resolveLogger())('info', $safeNote, $context);
+            // Manual review and paid_late must not disappear under LOG_LEVEL=warning.
+            $level = ($context['severity'] ?? '') === 'warning' ? 'warning' : 'info';
+            ($this->resolveLogger())($level, $safeNote, $context);
         };
     }
 

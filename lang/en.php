@@ -3,7 +3,6 @@
 declare(strict_types=1);
 
 return [
-    'pay_button' => 'Pay with Paymos',
     'payment_cannot_be_used' => 'This payment method cannot be used for this invoice.',
     'payment_unavailable' => 'Paymos is temporarily unavailable. Please contact support.',
     'replacement_blocked' => 'The store needs to review this order before payment can continue. Please contact support.',
@@ -24,8 +23,6 @@ return [
     'config_connection_label' => 'Connection',
     'config_connection_connected' => 'Connected — credentials are encrypted in this Paymenter installation',
     'config_connection_disconnected' => 'Not connected — click Connect Paymos and approve this installation',
-    'config_button_text_label' => 'Button Text',
-    'config_button_text_description' => 'Text shown on the Paymenter invoice payment button.',
     'refund_panel_title' => 'Paymos refunds',
     'refund_label_operation' => 'Operation',
     'refund_label_type' => 'Type',
@@ -39,6 +36,7 @@ return [
     'refund_failed' => 'Refund request failed.',
     'refund_reconnect_hint' => 'Refunds through Paymos are not available on this connection: reconnect the gateway with Connect Paymos in the Gateways settings.',
     'refund_native_in_progress' => 'Paymos refund is in progress. Track it in the Paymos refunds panel on this invoice; the gateway will record the refund in Paymenter once the transfer completes.',
+    'refund_native_use_panel' => 'Start this refund in the Paymos refunds panel on this invoice. Nothing was sent to Paymos.',
     'refund_native_failed' => 'Paymos refund failed. Check the reason below and the Paymos refunds panel on the invoice.',
     'refund_external_badge' => 'Created in Paymos Dashboard',
     'refund_empty' => 'No Paymos refunds have been requested for this invoice yet.',

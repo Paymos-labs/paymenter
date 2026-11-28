@@ -73,13 +73,24 @@
             },
             body: JSON.stringify(payload || {})
         }).then(function (resp) {
-            return resp.json().then(function (data) {
+            return resp.json().catch(function () {
+                return null;
+            }).then(function (data) {
                 if (!resp.ok) {
-                    throw new Error((data && data.error) ? String(data.error) : cfg.labels.failed);
+                    var error = new Error(cfg.labels.failed);
+                    // 400 carries a sentence for the admin (e.g. the HTTPS requirement); 403/419 carry codes.
+                    if (resp.status === 400 && data && typeof data.error === 'string' && data.error.trim() !== '') {
+                        error.serverMessage = data.error;
+                    }
+                    throw error;
                 }
                 return data;
             });
         });
+    }
+
+    function connectErrorText(err) {
+        return (err && err.serverMessage) ? err.serverMessage : cfg.labels.failed;
     }
 
     var manual = false;
@@ -133,17 +144,17 @@
                     }
                     var delay = (res && res.status === 'slow_down') ? intervalMs + 5000 : intervalMs;
                     window.setTimeout(poll, delay);
-                }).catch(function () {
-                    say(cfg.labels.failed);
+                }).catch(function (err) {
+                    say(connectErrorText(err));
                     btn.disabled = false;
                 });
             }
             window.setTimeout(poll, intervalMs);
-        }).catch(function () {
+        }).catch(function (err) {
             if (tab && !tab.closed) {
                 tab.close();
             }
-            statusEl.textContent = cfg.labels.failed;
+            statusEl.textContent = connectErrorText(err);
             btn.disabled = false;
         });
     });

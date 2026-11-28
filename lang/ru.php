@@ -3,7 +3,6 @@
 declare(strict_types=1);
 
 return [
-    'pay_button' => 'Оплатить через Paymos',
     'payment_cannot_be_used' => 'Этот способ оплаты не подходит для этого счёта.',
     'payment_unavailable' => 'Paymos временно недоступен. Обратитесь в поддержку.',
     'replacement_blocked' => 'Магазину нужно проверить этот заказ, прежде чем вы сможете продолжить оплату. Обратитесь в поддержку.',
@@ -24,8 +23,6 @@ return [
     'config_connection_label' => 'Подключение',
     'config_connection_connected' => 'Подключено — ключи зашифрованы в этой установке Paymenter',
     'config_connection_disconnected' => 'Не подключено — нажмите «Подключить Paymos» и подтвердите установку',
-    'config_button_text_label' => 'Текст кнопки',
-    'config_button_text_description' => 'Подпись на кнопке оплаты в счёте Paymenter.',
     'refund_panel_title' => 'Возвраты Paymos',
     'refund_label_operation' => 'Операция',
     'refund_label_type' => 'Вид',
@@ -39,6 +36,7 @@ return [
     'refund_failed' => 'Не удалось оформить возврат.',
     'refund_reconnect_hint' => 'Возвраты через Paymos недоступны для этого подключения: переподключите модуль кнопкой «Подключить Paymos» в настройках платёжных шлюзов.',
     'refund_native_in_progress' => 'Возврат в Paymos уже запущен и выполняется. Следите за статусом в блоке «Возвраты Paymos» на этой странице: модуль обновит счёт в Paymenter сразу после завершения выплаты.',
+    'refund_native_use_panel' => 'Запустите возврат в блоке «Возвраты Paymos» на этой странице. В Paymos ничего не отправлено.',
     'refund_native_failed' => 'Возврат через Paymos не прошёл. Подробности указаны ниже и в блоке «Возвраты Paymos» на странице счёта.',
     'refund_external_badge' => 'Создан в кабинете Paymos',
     'refund_empty' => 'По этому счёту возвратов ещё не было.',

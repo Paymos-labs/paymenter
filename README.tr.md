@@ -55,7 +55,7 @@ Her satıcı gömülü kimlik bilgisi, proje ID’si veya gizli anahtar içermey
 https://<your-paymenter-panel>/extensions/gateways/paymos/webhook
 ```
 
-Bağlantıdan sonra ağ geçidi ayarları yalnızca **Bağlantı** (Bağla / Yeniden bağla durumu), **Mod** (`Sandbox` veya `Live`) ve **Düğme metni** alanlarını gösterir — hiçbir yerde elle girilen API anahtarı, API gizli anahtarı, proje ID’si veya webhook gizli anahtarı alanı yer almaz.
+Bağlantıdan sonra ağ geçidi ayarları yalnızca **Bağlantı** (Bağla / Yeniden bağla durumu) ve **Mod** (`Sandbox` veya `Live`) alanlarını gösterir — hiçbir yerde elle girilen API anahtarı, API gizli anahtarı, proje ID’si veya webhook gizli anahtarı alanı yer almaz.
 
 ## Gizli bilgilerin saklanması
 
